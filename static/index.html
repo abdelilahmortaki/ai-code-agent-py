@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Code Agent</title>
+  <style>
+    :root {
+      --bg: #1e1e1e; --bg-panel: #252526; --bg-hover: #2a2d2e; --bg-active: #37373d;
+      --border: #3c3c3c; --text: #cccccc; --text-dim: #888; --text-bright: #ffffff;
+      --accent: #007acc; --accent-h: #1a8ad4;
+      --green: #4ec9b0; --red: #f44747; --yellow: #dcdcaa; --orange: #ce9178;
+      --diff-add: rgba(40,167,69,.13); --diff-del: rgba(220,53,69,.13);
+      --diff-info: rgba(0,122,204,.12);
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+    /* ── Header ── */
+    header{height:48px;background:#333;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0}
+    .logo{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;color:var(--text-bright)}
+    .logo-icon{width:22px;height:22px;background:var(--accent);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:13px}
+    .spacer{flex:1}
+    select,button{background:var(--bg-panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 10px;font-size:13px;cursor:pointer;font-family:inherit}
+    button.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:500;padding:6px 20px}
+    button.primary:hover{background:var(--accent-h)}
+    button.primary:disabled{opacity:.5;cursor:not-allowed}
+    button:not(.primary):hover{background:var(--bg-active)}
+    .status-pill{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim)}
+    .dot{width:8px;height:8px;border-radius:50%;background:var(--red);transition:background .3s}
+    .dot.ok{background:var(--green)}
+
+    /* ── Layout ── */
+    .layout{flex:1;display:flex;overflow:hidden}
+    .resize-handle-v{width:6px;background:transparent;cursor:col-resize;transition:background .2s;flex-shrink:0;border-left:1px solid var(--border);border-right:1px solid var(--border)}
+    .resize-handle-v:hover{background:var(--accent)}
+    .resize-handle-h{height:6px;background:transparent;cursor:row-resize;transition:background .2s;flex-shrink:0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+    .resize-handle-h:hover{background:var(--accent)}
+
+    /* ── Sidebar ── */
+    #sidebar{width:260px;min-width:120px;max-width:60%;background:var(--bg-panel);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+    .sidebar-title{padding:7px 12px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-dim);border-bottom:1px solid var(--border);flex-shrink:0}
+    #file-tree{flex:1;overflow-y:auto;padding:4px 0}
+    .tree-item{display:flex;align-items:center;gap:5px;padding:3px 8px;font-size:12.5px;cursor:pointer;white-space:nowrap;user-select:none}
+    .tree-item:hover{background:var(--bg-hover)}
+    .tree-item.active{background:var(--bg-active);color:var(--text-bright)}
+    .tree-icon{flex-shrink:0;width:16px;height:16px;display:flex;align-items:center;justify-content:center}
+    .ci{color:var(--yellow)} .cx{color:#e37933} .cy{color:var(--green)} .cj{color:var(--orange)} .cd{color:var(--text-dim)}
+
+    /* ── Main area ── */
+    #main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+
+    /* ── Editor (VS Code-style tabs + content) ── */
+    #editor-area{display:none;flex-direction:column;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0;min-height:80px;max-height:70%;overflow:hidden}
+    #editor-area.open{display:flex}
+    .editor-tabs{display:flex;background:#2d2d2d;border-bottom:1px solid var(--border);overflow-x:auto;flex-shrink:0;height:35px}
+    .editor-tabs::-webkit-scrollbar{height:3px}
+    .editor-tab{display:inline-flex;align-items:center;gap:8px;padding:0 14px;height:35px;font-size:12px;color:var(--text-dim);cursor:pointer;border-right:1px solid var(--border);white-space:nowrap;flex-shrink:0;position:relative}
+    .editor-tab:hover{background:var(--bg-hover);color:var(--text)}
+    .editor-tab.active{background:var(--bg);color:var(--text-bright);border-top:1px solid var(--accent)}
+    .editor-tab-close{opacity:0;width:16px;height:16px;display:flex;align-items:center;justify-content:center;border-radius:3px;font-size:14px;line-height:1}
+    .editor-tab:hover .editor-tab-close{opacity:.7}
+    .editor-tab-close:hover{opacity:1!important;background:rgba(255,255,255,.12)}
+    #editor-content{flex:1;overflow:hidden;font-family:'Consolas','Courier New',monospace;font-size:12px;display:flex;flex-direction:column;min-height:0}
+    #editor-content pre{flex:1;margin:0;padding:10px;white-space:pre;background:transparent!important;overflow:auto;min-height:0}
+    #editor-content code{background:transparent!important;padding:0!important}
+
+    /* ── Story form ── */
+    #story-pane{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:10px;flex-shrink:0;overflow-y:auto}
+    .story-toggle{display:flex;align-items:center;justify-content:space-between;padding:4px 16px;border-top:1px solid var(--border);background:var(--bg-panel);flex-shrink:0;cursor:pointer;user-select:none;font-size:11px;color:var(--text-dim)}
+    .story-toggle:hover{background:var(--bg-hover);color:var(--text)}
+    .story-toggle-arrow{font-size:11px}
+    #story-results-area{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+    #story-results-area.collapsed{display:none}
+    #editor-area.fill{flex:1;max-height:none!important;height:auto!important}
+    .form-row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+    .fg{display:flex;flex-direction:column;gap:4px}
+    .fg label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--text-dim)}
+    .fg input,.fg textarea,.fg select{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:5px 9px;font-size:13px;font-family:inherit}
+    .fg input:focus,.fg textarea:focus{border-color:var(--accent);outline:none}
+    .fg textarea{resize:vertical}
+
+    /* ── Results area ── */
+    #results{flex:1;display:flex;flex-direction:column;overflow:hidden}
+    .res-header{display:flex;align-items:center;gap:10px;padding:7px 16px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;min-height:38px}
+    .badge{display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:12px;font-size:11.5px;font-weight:500}
+    .bs{background:rgba(40,167,69,.18);color:#4caf50}
+    .bf{background:rgba(244,71,71,.18);color:var(--red)}
+    .bw{background:rgba(255,193,7,.18);color:#ffc107}
+    .bi{background:rgba(0,122,204,.18);color:var(--accent)}
+    .tabs{display:flex;border-bottom:1px solid var(--border);padding:0 16px;flex-shrink:0}
+    .tab{padding:7px 16px;font-size:13px;cursor:pointer;border-bottom:2px solid transparent;color:var(--text-dim)}
+    .tab:hover{color:var(--text)}
+    .tab.active{color:var(--text-bright);border-bottom-color:var(--accent)}
+    .tab-body{display:none;flex:1;overflow:auto}
+    .tab-body.active{display:block}
+
+    /* ── Diff ── */
+    .diff-viewer{font-family:'Consolas','Courier New',monospace;font-size:12px;line-height:1.55}
+    .diff-file-hdr{background:rgba(0,122,204,.1);color:var(--accent);padding:5px 12px;font-weight:700;border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:12px;display:flex;align-items:center;gap:8px;cursor:pointer}
+    .diff-file-hdr:hover{background:rgba(0,122,204,.2)}
+    .dl{display:flex;padding:0 10px;white-space:pre}
+    .dl.add{background:var(--diff-add);color:#89d185}
+    .dl.del{background:var(--diff-del);color:#f48771}
+    .dl.info{background:var(--diff-info);color:#569cd6}
+    .dm{width:14px;flex-shrink:0;color:var(--text-dim)}
+    .dl.add .dm{color:#4caf50}
+    .dl.del .dm{color:#f44747}
+    .editor-tab.diff-tab{border-top-color:#ce9178}
+    #editor-content>.diff-viewer{height:100%;overflow:auto}
+
+    /* ── Test output ── */
+    #test-output{font-family:'Consolas','Courier New',monospace;font-size:12px;padding:12px;white-space:pre-wrap;line-height:1.5}
+
+    /* ── Files changed ── */
+    .fc-item{display:flex;align-items:center;gap:8px;padding:7px 16px;font-size:13px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s}
+    .fc-item:hover{background:rgba(255,255,255,.03)}
+    .op{padding:1px 7px;border-radius:3px;font-size:11px;font-weight:700}
+    .op-create{background:rgba(40,167,69,.2);color:#4caf50}
+    .op-modify{background:rgba(0,122,204,.2);color:var(--accent)}
+    .op-delete{background:rgba(244,71,71,.2);color:var(--red)}
+
+    /* ── Analysis ── */
+    .finding{display:flex;gap:8px;padding:7px 16px;font-size:13px;border-bottom:1px solid var(--border)}
+
+    /* ── Empty / no-result ── */
+    .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text-dim);padding:40px;text-align:center}
+    .empty>svg{opacity:.35}
+
+    /* ── Loading overlay ── */
+    #overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;align-items:center;justify-content:center}
+    #overlay.on{display:flex}
+    .overlay-box{background:var(--bg-panel);border:1px solid var(--border);border-radius:10px;padding:28px 36px;display:flex;flex-direction:column;align-items:center;gap:14px;min-width:480px;max-width:580px}
+    .overlay-hdr{display:flex;align-items:center;gap:14px;align-self:flex-start}
+    .spin{width:34px;height:34px;border:3px solid rgba(0,122,204,.3);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;flex-shrink:0}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .overlay-title{font-size:15px;font-weight:600;color:var(--text-bright)}
+    #overlay-msg{font-size:12px;color:var(--text-dim);text-align:center}
+    #run-log{display:none;width:100%;height:220px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-family:'Consolas','Courier New',monospace;font-size:11.5px;padding:8px 10px;flex-direction:column;gap:2px}
+    .log-line{display:flex;gap:10px;line-height:1.6}
+    .log-ts{color:var(--text-dim);flex-shrink:0;font-size:11px}
+    .log-txt{color:var(--text);word-break:break-word}
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar{width:7px;height:7px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:#424242;border-radius:4px}
+    ::-webkit-scrollbar-thumb:hover{background:#555}
+  </style>
+</head>
+<body>
+
+<!-- ═══ Header ═══════════════════════════════════════════════════════════════ -->
+<header>
+  <div class="logo">
+    <div class="logo-icon" style="display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><path d="M8 16h.01"/><path d="M16 16h.01"/></svg></div>
+    AI Code Agent
+  </div>
+  <span style="font-size:12px;color:var(--text-dim)">Project:</span>
+  <select id="project-sel" style="min-width:190px"></select>
+  <button onclick="openFolder()" style="background:var(--accent);color:#fff;border-color:var(--accent);display:inline-flex;align-items:center;gap:6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Browse Folder</button>
+  <input type="file" id="folder-input" webkitdirectory style="display:none" onchange="onFolderSelected(this)">
+  <button id="rebuild-btn" onclick="rebuildIndex()" style="display:inline-flex;align-items:center;gap:6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>Rebuild Index</button>
+  <div class="spacer"></div>
+  <div class="status-pill">
+    <span id="status-txt">Connecting…</span>
+    <div class="dot" id="dot"></div>
+  </div>
+</header>
+
+<!-- ═══ Layout ═══════════════════════════════════════════════════════════════ -->
+<div class="layout">
+
+  <!-- ── Sidebar ── -->
+  <aside id="sidebar">
+    <div class="sidebar-title">Explorer</div>
+    <div id="file-tree">
+      <div class="empty"><span>No project loaded</span></div>
+    </div>
+  </aside>
+
+  <!-- ── Resize handle (vertical) ── -->
+  <div class="resize-handle-v" id="resize-sidebar"></div>
+
+  <!-- ── Main ── -->
+  <div id="main">
+
+    <!-- VS Code-style editor: tabs + content, shown when a file is open -->
+    <div id="editor-area">
+      <div class="editor-tabs" id="editor-tabs"></div>
+      <div id="editor-content"></div>
+    </div>
+
+    <!-- ── Resize handle (horizontal) ── -->
+    <div class="resize-handle-h" id="resize-editor"></div>
+
+    <!-- Story form + Results area -->
+    <div id="story-results-area">
+
+    <div id="story-pane">
+      <div class="form-row">
+        <div class="fg" style="flex:1;min-width:180px">
+          <label>Load existing story</label>
+          <select id="story-sel" onchange="loadStory(this.value)" style="width:100%">
+            <option value="">— or write a new story —</option>
+          </select>
+        </div>
+        <div class="fg" style="flex:2;min-width:240px">
+          <label>Title *</label>
+          <input id="s-title" type="text" placeholder="e.g. Cancel a PENDING transaction" style="width:100%">
+        </div>
+        <div class="fg">
+          <label>Priority</label>
+          <select id="s-priority"><option>High</option><option selected>Medium</option><option>Low</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="fg" style="flex:2;min-width:240px">
+          <label>Description *</label>
+          <textarea id="s-desc" rows="3" placeholder="As a user, I want to…" style="width:100%"></textarea>
+        </div>
+        <div class="fg" style="flex:1;min-width:180px">
+          <label>Acceptance Criteria (one per line)</label>
+          <textarea id="s-criteria" rows="3" placeholder="- Returns 200 on success&#10;- 404 if not found" style="width:100%"></textarea>
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="primary" id="run-btn" onclick="runAgent()" style="white-space:nowrap;display:inline-flex;align-items:center;gap:7px"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>Run Agent</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="results">
+      <div class="res-header" id="res-header">
+        <span style="font-size:13px;color:var(--text-dim)">Run the agent to see results here</span>
+      </div>
+      <div class="tabs">
+        <div class="tab active" onclick="tab('diff')">Diff</div>
+        <div class="tab" onclick="tab('analysis')">Static Analysis</div>
+        <div class="tab" onclick="tab('files')">Files Changed</div>
+      </div>
+      <div id="tb-diff" class="tab-body active">
+        <div class="empty"><svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--border)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v14"/><path d="m9 6-3 3 3 3"/><path d="m15 18 3-3-3-3"/><circle cx="7" cy="3" r="2"/><circle cx="17" cy="21" r="2"/></svg><span>No diff yet — run the agent first</span></div>
+      </div>
+      <div id="tb-analysis" class="tab-body">
+        <div class="empty"><svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--border)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/></svg><span>No analysis yet</span></div>
+      </div>
+      <div id="tb-files" class="tab-body">
+        <div class="empty"><svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--border)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-3a2 2 0 0 1-2-2V2"/><path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z"/><path d="M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8"/></svg><span>No files changed yet</span></div>
+      </div>
+    </div>
+
+    </div><!-- /story-results-area -->
+
+    <!-- Always-visible toggle bar at the bottom -->
+    <div class="story-toggle" id="story-toggle" onclick="toggleStoryPane()">
+      <span>Story &amp; Results</span>
+      <span class="story-toggle-arrow" id="story-arrow">▾</span>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /layout -->
+
+<!-- ═══ Loading overlay ══════════════════════════════════════════════════════ -->
+<div id="overlay">
+  <div class="overlay-box">
+    <div class="overlay-hdr">
+      <div class="spin"></div>
+      <span class="overlay-title" id="overlay-title">Processing…</span>
+    </div>
+    <div id="overlay-msg"></div>
+    <div id="run-log"></div>
+  </div>
+</div>
+
+<!-- ═══ highlight.js (optional, loaded from CDN) ════════════════════════════ -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/vs2015.min.css" crossorigin="anonymous">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" crossorigin="anonymous"></script>
+
+<script>
+// ─── svg icons (Lucide-style) ────────────────────────────────────────────────
+const _s = (p, sz=14, fill='none', sw=1.75) =>
+  `<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="${fill}" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0">${p}</svg>`;
+
+const ic = {
+  folder:    (sz=14) => _s(`<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>`, sz),
+  folderOpen:(sz=14) => _s(`<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>`, sz),
+  file:      (sz=14) => _s(`<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>`, sz),
+  fileCode:  (sz=14) => _s(`<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m10 13-2 2 2 2"/><path d="m14 17 2-2-2-2"/>`, sz),
+  settings:  (sz=14) => _s(`<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>`, sz),
+  check:     (sz=14) => _s(`<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>`, sz),
+  xCircle:   (sz=14) => _s(`<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>`, sz),
+  alert:     (sz=14) => _s(`<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>`, sz),
+  repeat:    (sz=14) => _s(`<path d="m2 9 3-3 3 3"/><path d="M13 18H7a2 2 0 0 1-2-2V6"/><path d="m22 15-3 3-3-3"/><path d="M11 6h6a2 2 0 0 1 2 2v10"/>`, sz),
+};
+
+// ─── resizable layout ────────────────────────────────────────────────────────
+let _resizing = null;
+function _initResizers() {
+  const sbHandle = document.getElementById('resize-sidebar');
+  const edHandle = document.getElementById('resize-editor');
+  const sb = document.getElementById('sidebar');
+  const ea = document.getElementById('editor-area');
+  
+  // Restore saved dimensions
+  const savedW = localStorage.getItem('ui.sidebarWidth');
+  const savedH = localStorage.getItem('ui.editorHeight');
+  if (savedW) sb.style.width = savedW + 'px';
+  if (savedH) ea.style.height = savedH + 'px';
+  
+  sbHandle?.addEventListener('mousedown', e => {
+    _resizing = {
+      type: 'width',
+      target: sb,
+      startX: e.clientX,
+      startW: sb.offsetWidth
+    };
+  });
+  
+  edHandle?.addEventListener('mousedown', e => {
+    // Only drag when story-results is visible
+    const area = document.getElementById('story-results-area');
+    if (area.classList.contains('collapsed')) return;
+    _resizing = {
+      type: 'height',
+      target: ea,
+      startY: e.clientY,
+      startH: ea.offsetHeight
+    };
+  });
+  
+  document.addEventListener('mousemove', e => {
+    if (!_resizing) return;
+    if (_resizing.type === 'width') {
+      const delta = e.clientX - _resizing.startX;
+      const newW = Math.max(120, Math.min(_resizing.startW + delta, window.innerWidth * 0.6));
+      _resizing.target.style.width = newW + 'px';
+    } else if (_resizing.type === 'height') {
+      const delta = e.clientY - _resizing.startY;
+      const newH = Math.max(80, Math.min(_resizing.startH + delta, window.innerHeight * 0.7));
+      _resizing.target.style.height = newH + 'px';
+    }
+  });
+  
+  document.addEventListener('mouseup', () => {
+    if (_resizing?.type === 'width') {
+      localStorage.setItem('ui.sidebarWidth', _resizing.target.offsetWidth);
+    } else if (_resizing?.type === 'height') {
+      localStorage.setItem('ui.editorHeight', _resizing.target.offsetHeight);
+    }
+    _resizing = null;
+  });
+}
+
+// ─── state ──────────────────────────────────────────────────────────────────
+let project = null, stories = [];
+
+// ─── folder picker ─────────────────────────────────────────────────────────
+const _EXT  = new Set(['java','xml','yml','yaml','properties','json','md','txt']);
+const _SKIP = new Set(['target','.git','node_modules','.agent','__pycache__','build','.idea','.vscode','dist','out']);
+
+function openFolder() { document.getElementById('folder-input').click(); }
+
+function _fileOk(f) {
+  if (f.size > 150 * 1024) return false;
+  const ext = f.name.split('.').pop().toLowerCase();
+  if (!_EXT.has(ext)) return false;
+  const parts = f.webkitRelativePath.split('/');
+  return !parts.slice(1, -1).some(p => _SKIP.has(p));
+}
+
+async function onFolderSelected(input) {
+  const all   = [...input.files];
+  const files = all.filter(_fileOk);
+  if (!files.length) { alert('No supported source files found (java/xml/yml/json/md/txt, <150 KB each).'); input.value=''; return; }
+  const folder = all[0].webkitRelativePath.split('/')[0];
+  showOverlay(true, `Reading ${files.length} files from "${folder}"…`);
+  try {
+    const entries = await Promise.all(files.map(async f => ({
+      path: f.webkitRelativePath,
+      content: await f.text(),
+    })));
+    document.getElementById('overlay-msg').textContent = `Uploading ${entries.length} files…`;
+    const res = await api('/api/agent/projects/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_name: folder, files: entries }),
+    });
+    const sel = document.getElementById('project-sel');
+    if (![...sel.options].find(o => o.value === res.project_id))
+      sel.appendChild(opt(res.project_id, res.name));
+    sel.value = res.project_id;
+    project   = res.project_id;
+    await reload(project);
+    setStatus(true);
+  } catch(e) { alert('Upload failed: ' + e.message); }
+  finally { showOverlay(false); input.value = ''; }
+}
+
+// ─── boot ───────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    const projects = await api('/api/agent/projects');
+    const sel = document.getElementById('project-sel');
+    projects.forEach(p => sel.appendChild(opt(p.id, p.name)));
+    // Never auto-load a project — user must explicitly browse a folder
+    document.getElementById('file-tree').innerHTML =
+      `<div class="empty">${ic.folder(40)}<span style="margin-bottom:8px">No project loaded</span>` +
+      `<button class="primary" onclick="openFolder()" style="padding:8px 18px;font-size:13px;display:inline-flex;align-items:center;gap:6px">${ic.folderOpen()} Browse Folder</button></div>`;
+    setStatus(true);
+    sel.onchange = () => { project = sel.value; reload(project); };
+  } catch { setStatus(false); }
+}
+
+function setStatus(ok) {
+  document.getElementById('dot').classList.toggle('ok', ok);
+  document.getElementById('status-txt').textContent = ok ? 'Connected' : 'Disconnected';
+}
+
+async function reload(pid) {
+  // Close all editor tabs when switching projects
+  _editorTabs.clear();
+  _activeTab = null;
+  document.getElementById('editor-area').classList.remove('open');
+  document.getElementById('editor-content').innerHTML = '';
+  document.getElementById('editor-tabs').innerHTML = '';
+  await Promise.all([loadTree(pid), loadStories(pid)]);
+}
+
+// ─── file tree ───────────────────────────────────────────────────────────────
+async function loadTree(pid) {
+  try {
+    const data = await api(`/api/agent/${pid}/files`);
+    const root = buildTree(data.files);
+    const el = document.getElementById('file-tree');
+    el.innerHTML = '';
+    renderNode(root, el, 0);
+  } catch (e) {
+    document.getElementById('file-tree').innerHTML =
+      `<div class="empty"><span style="color:var(--red)">Failed to load files</span></div>`;
+  }
+}
+
+function buildTree(paths) {
+  const root = {};
+  (paths || []).forEach(p => {
+    const parts = p.split('/');
+    let n = root;
+    parts.forEach((part, i) => {
+      if (i === parts.length - 1) { n[part] = p; }
+      else { if (typeof n[part] !== 'object') n[part] = {}; n = n[part]; }
+    });
+  });
+  return root;
+}
+
+function renderNode(node, container, depth) {
+  const entries = Object.entries(node).sort(([ak,av],[bk,bv]) => {
+    const ad = typeof av === 'object', bd = typeof bv === 'object';
+    return ad !== bd ? (ad ? -1 : 1) : ak.localeCompare(bk);
+  });
+  entries.forEach(([name, val]) => {
+    const isDir = typeof val === 'object';
+    const item = document.createElement('div');
+    item.className = 'tree-item';
+    item.style.paddingLeft = (8 + depth * 14) + 'px';
+    if (isDir) {
+      const sub = document.createElement('div');
+      let open = true;
+      renderNode(val, sub, depth + 1);
+      item.innerHTML = `<span class="tree-icon cd">▾</span><span class="ci">${name}/</span>`;
+      item.onclick = e => {
+        e.stopPropagation();
+        open = !open;
+        sub.style.display = open ? '' : 'none';
+        item.querySelector('.tree-icon').textContent = open ? '▾' : '▸';
+      };
+      container.appendChild(item);
+      container.appendChild(sub);
+    } else {
+      const ext = name.split('.').pop().toLowerCase();
+      const clr = {java:'ci',xml:'cx',yml:'cy',yaml:'cy',json:'cj'}[ext] || 'cd';
+      const ico = ({java:ic.fileCode,xml:ic.file,yml:ic.settings,yaml:ic.settings,json:ic.fileCode,md:ic.file,properties:ic.settings}[ext] || ic.file)();
+      item.innerHTML = `<span class="tree-icon ${clr}">${ico}</span><span>${name}</span>`;
+      item.dataset.path = val;
+      item.onclick = () => openFile(val, item);
+      container.appendChild(item);
+    }
+  });
+}
+
+// ─── editor tabs ─────────────────────────────────────────────────────────────
+const _editorTabs = new Map(); // path → { content, lang }
+let _activeTab = null;
+
+async function openFile(path, treeEl) {
+  document.querySelectorAll('.tree-item.active').forEach(e => e.classList.remove('active'));
+  if (treeEl) treeEl.classList.add('active');
+
+  // If already open, just activate
+  if (_editorTabs.has(path)) { _activateTab(path); return; }
+
+  try {
+    const data = await api(`/api/agent/${project}/file?path=${encodeURIComponent(path)}`);
+    const ext  = path.split('.').pop().toLowerCase();
+    const lang = {java:'java',xml:'xml',yml:'yaml',yaml:'yaml',json:'json',md:'markdown',properties:'properties'}[ext] || 'plaintext';
+    _editorTabs.set(path, { content: data.content, lang });
+    _renderTabBar();
+    _activateTab(path);
+  } catch {
+    // File may not exist yet (pending create) — reconstruct content from diff +lines
+    const content = _extractNewContentFromDiff(_lastFullDiff, path);
+    if (content !== null) {
+      const ext  = path.split('.').pop().toLowerCase();
+      const lang = {java:'java',xml:'xml',yml:'yaml',yaml:'yaml',json:'json',md:'markdown',properties:'properties'}[ext] || 'plaintext';
+      _editorTabs.set(path, { content, lang, pending: true });
+      _renderTabBar();
+      _activateTab(path);
+    } else {
+      _showEditorError(path);
+    }
+  }
+}
+
+// Reconstruct new file content from diff +lines for a given path (pending create)
+function _extractNewContentFromDiff(fullDiff, targetPath) {
+  const section = _extractFileDiff(fullDiff, targetPath);
+  if (!section) return null;
+  const lines = [];
+  let inHunk = false;
+  for (const line of section.split('\n')) {
+    if (line.startsWith('@@')) { inHunk = true; continue; }
+    if (!inHunk) continue;
+    if (line.startsWith('+')) lines.push(line.slice(1));
+    else if (line.startsWith('-')) { /* skip removed lines */ }
+    else if (line.startsWith(' ')) lines.push(line.slice(1));
+  }
+  return lines.length ? lines.join('\n') : null;
+}
+
+function _renderTabBar() {
+  const bar = document.getElementById('editor-tabs');
+  bar.innerHTML = '';
+  for (const [tabKey, entry] of _editorTabs) {
+    const isDiff = entry.type === 'diff';
+    const isPending = entry.pending === true;
+    const baseName = isDiff
+      ? ('± ' + (entry.path || tabKey).split('/').pop())
+      : tabKey.split('/').pop();
+    const name = isPending ? (baseName + ' ●') : baseName;
+    const tab = document.createElement('div');
+    tab.className = 'editor-tab' + (tabKey === _activeTab ? ' active' : '') + (isDiff ? ' diff-tab' : '');
+    tab.dataset.path = tabKey;
+    tab.title = isDiff ? ('Diff: ' + entry.path) : tabKey;
+    tab.innerHTML = `<span>${name}</span><span class="editor-tab-close" title="Close">\u00d7</span>`;
+    tab.addEventListener('click', e => {
+      if (e.target.classList.contains('editor-tab-close')) { _closeTab(tabKey); return; }
+      if (!isDiff) {
+        document.querySelectorAll('.tree-item.active').forEach(el => el.classList.remove('active'));
+        const treeEl = document.querySelector(`.tree-item[data-path="${CSS.escape(tabKey)}"]`);
+        if (treeEl) treeEl.classList.add('active');
+      }
+      _activateTab(tabKey);
+    });
+    bar.appendChild(tab);
+  }
+}
+
+function _activateTab(path) {
+  _activeTab = path;
+  const entry = _editorTabs.get(path);
+  const area  = document.getElementById('editor-area');
+  const ec    = document.getElementById('editor-content');
+  // Auto-expand to saved height or default 340px
+  const savedH = localStorage.getItem('ui.editorHeight');
+  if (savedH) area.style.height = savedH + 'px';
+  area.classList.add('open');
+  ec.innerHTML = '';
+
+  if (entry.type === 'diff') {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'diff-viewer';
+    wrapper.style.cssText = 'flex:1;overflow:auto;min-height:0';
+    _renderDiffInto(wrapper, entry.content);
+    ec.appendChild(wrapper);
+  } else {
+    if (entry.pending) {
+      const banner = document.createElement('div');
+      banner.style.cssText = 'padding:5px 12px;background:rgba(206,145,120,.15);color:#ce9178;font-size:11px;border-bottom:1px solid rgba(206,145,120,.3);flex-shrink:0;display:flex;align-items:center;gap:6px';
+      banner.innerHTML = '<span style="font-size:13px">&#9888;</span><span>Pending create — preview of new file content (not yet written to disk)</span>';
+      ec.appendChild(banner);
+    }
+    const pre  = document.createElement('pre');
+    const code = document.createElement('code');
+    code.className = `language-${entry.lang}`;
+    code.textContent = entry.content;
+    pre.appendChild(code);
+    ec.appendChild(pre);
+    if (window.hljs) hljs.highlightElement(code);
+  }
+
+  document.querySelectorAll('.editor-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.path === path));
+}
+
+function _closeTab(path) {
+  _editorTabs.delete(path);
+  // deactivate sidebar
+  const treeEl = document.querySelector(`.tree-item[data-path="${CSS.escape(path)}"]`);
+  if (treeEl) treeEl.classList.remove('active');
+  if (_editorTabs.size === 0) {
+    _activeTab = null;
+    document.getElementById('editor-area').classList.remove('open');
+    document.getElementById('editor-content').innerHTML = '';
+    document.getElementById('editor-tabs').innerHTML = '';
+    return;
+  }
+  const next = _activeTab === path ? [..._editorTabs.keys()].at(-1) : _activeTab;
+  _renderTabBar();
+  _activateTab(next);
+}
+
+function _showEditorError(path) {
+  document.getElementById('editor-area').classList.add('open');
+  document.getElementById('editor-content').innerHTML =
+    `<div style="padding:12px;color:var(--red)">Error loading ${path}</div>`;
+}
+
+// ─── stories ─────────────────────────────────────────────────────────────────
+async function loadStories(pid) {
+  try {
+    stories = await api(`/api/agent/${pid}/stories`);
+    const sel = document.getElementById('story-sel');
+    sel.innerHTML = '<option value="">— or write a new story —</option>';
+    stories.forEach(s => sel.appendChild(opt(s.id, `${s.id} — ${s.title}`)));
+  } catch { stories = []; }
+}
+
+function toggleStoryPane() {
+  const area   = document.getElementById('story-results-area');
+  const handle = document.getElementById('resize-editor');
+  const editor = document.getElementById('editor-area');
+  const arrow  = document.getElementById('story-arrow');
+  const collapsed = area.classList.toggle('collapsed');
+  if (collapsed) {
+    // Hide story+results and resize handle; editor fills remaining space
+    handle.style.display = 'none';
+    editor.classList.add('fill');
+    editor.style.height = '';
+    arrow.textContent = '\u25b4';  // ▴ = click to expand
+  } else {
+    // Restore split view
+    handle.style.display = '';
+    editor.classList.remove('fill');
+    const savedH = localStorage.getItem('ui.editorHeight');
+    if (savedH) editor.style.height = savedH + 'px';
+    arrow.textContent = '\u25be';  // ▾ = click to collapse
+  }
+}
+
+function loadStory(id) {
+  const s = stories.find(x => x.id === id);
+  if (!s) return;
+  document.getElementById('s-title').value = s.title || '';
+  document.getElementById('s-desc').value = s.description || '';
+  document.getElementById('s-criteria').value = (s.acceptanceCriteria || []).join('\n');
+  document.getElementById('s-priority').value = s.priority || 'Medium';
+}
+
+// ─── run agent ───────────────────────────────────────────────────────────────
+async function runAgent() {
+  const title = document.getElementById('s-title').value.trim();
+  const desc  = document.getElementById('s-desc').value.trim();
+  if (!title || !desc) { alert('Title and Description are required.'); return; }
+  if (!project) { alert('Select a project first.'); return; }
+
+  const criteria = document.getElementById('s-criteria').value
+    .split('\n').map(s => s.trim()).filter(Boolean);
+  const priority = document.getElementById('s-priority').value;
+  const runId    = crypto.randomUUID();
+
+  // Open SSE stream BEFORE POST — ensures no early log events are missed
+  const evtSrc = new EventSource(`/api/agent/${project}/run/${encodeURIComponent(runId)}/log`);
+  evtSrc.onmessage = e => appendLog(JSON.parse(e.data).msg);
+  evtSrc.addEventListener('done', () => evtSrc.close());
+  evtSrc.onerror = () => evtSrc.close();
+
+  showOverlay(true, '', true);  // agent mode: live log pane
+  document.getElementById('run-btn').disabled = true;
+  try {
+    const result = await api(
+      `/api/agent/${project}/generate-adhoc?run_id=${encodeURIComponent(runId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, description: desc, acceptanceCriteria: criteria, priority }),
+    });
+    renderResults(result);
+    loadTree(project);
+  } catch (e) {
+    alert('Agent error: ' + e.message);
+  } finally {
+    evtSrc.close();
+    showOverlay(false);
+    document.getElementById('run-btn').disabled = false;
+  }
+}
+
+// ─── rebuild index ────────────────────────────────────────────────────────────
+async function rebuildIndex() {
+  if (!project) { alert('Select a project first.'); return; }
+  showOverlay(true, 'Scanning repo and computing embeddings…');
+  document.getElementById('rebuild-btn').disabled = true;
+  try {
+    const r = await api(`/api/agent/${project}/index/rebuild`, { method: 'POST' });
+    alert(r.message || 'Done');
+  } catch (e) { alert('Rebuild failed: ' + e.message); }
+  finally {
+    showOverlay(false);
+    document.getElementById('rebuild-btn').disabled = false;
+  }
+}
+
+// ─── accept / reject ────────────────────────────────────────────────────────────
+let _pendingProject = null;
+
+async function acceptChanges() {
+  if (!_pendingProject) return;
+  const hdr = document.getElementById('res-header');
+  hdr.innerHTML = '<span style="color:var(--text-dim);font-size:13px">Applying changes…</span>';
+  try {
+    const r = await api(`/api/agent/${_pendingProject}/accept-plan`, { method: 'POST' });
+    renderDiff(r.git_diff);
+    hdr.innerHTML = `<span class="badge bs" style="display:inline-flex;align-items:center;gap:4px">${ic.check()} Changes applied to codebase</span>`;
+    _pendingProject = null;
+    loadTree(project);
+  } catch(e) {
+    hdr.innerHTML = `<span style="color:var(--red);font-size:13px">Apply failed: ${esc(e.message)}</span>`;
+  }
+}
+
+async function rejectChanges() {
+  if (!_pendingProject) return;
+  try { await api(`/api/agent/${_pendingProject}/reject-plan`, { method: 'POST' }); } catch {}
+  _pendingProject = null;
+  document.getElementById('res-header').innerHTML =
+    '<span style="font-size:13px;color:var(--text-dim)">Changes discarded — run the agent again to try a new plan</span>';
+}
+
+// ─── render results ───────────────────────────────────────────────────────────
+let _lastFullDiff = '';  // Store full diff for file-specific extraction
+
+// ─── diff helpers ─────────────────────────────────────────────────────────────
+function _extractFileDiff(fullDiff, targetPath) {
+  if (!fullDiff) return '';
+  // Split on 'diff --git' section boundaries
+  const sections = fullDiff.split(/(?=^diff --git )/m);
+  for (const section of sections) {
+    if (!section.trim()) continue;
+    const m = section.match(/^diff --git a\/.+ b\/(.+)/m);
+    if (!m) continue;
+    const bPath = m[1].trim();
+    if (bPath === targetPath || bPath.endsWith('/' + targetPath) ||
+        targetPath.endsWith('/' + bPath) || bPath.endsWith(targetPath)) {
+      return section;
+    }
+  }
+  return '';
+}
+
+function _renderDiffInto(container, text) {
+  if (!text?.trim()) {
+    container.innerHTML = `<div class="empty"><span>No diff available</span></div>`;
+    return;
+  }
+  text.split('\n').forEach(line => {
+    if (line.startsWith('diff --git')) {
+      const m = line.match(/diff --git a\/.+ b\/(.+)/);
+      const filePath = m ? m[1].trim() : line;
+      const h = document.createElement('div');
+      h.className = 'diff-file-hdr';
+      h.title = 'Click to open original file';
+      h.innerHTML = `<span style="flex:1">${esc(filePath)}</span><span style="font-size:11px;opacity:.6">↗ open</span>`;
+      h.onclick = () => openFile(filePath);
+      container.appendChild(h);
+      return;
+    }
+    if (/^(index |--- |\+\+\+ )/.test(line)) return;
+    const d = document.createElement('div');
+    d.className = 'dl';
+    const mark = document.createElement('span'); mark.className = 'dm';
+    const code = document.createElement('span');
+    if (line[0] === '+') { d.classList.add('add'); mark.textContent = '+'; code.textContent = line.slice(1); }
+    else if (line[0] === '-') { d.classList.add('del'); mark.textContent = '-'; code.textContent = line.slice(1); }
+    else if (line.startsWith('@@')) { d.classList.add('info'); mark.textContent = ''; code.textContent = line; }
+    else { mark.textContent = ' '; code.textContent = line.length > 0 ? line.slice(1) : ''; }
+    d.appendChild(mark); d.appendChild(code); container.appendChild(d);
+  });
+}
+
+// Open a per-file diff as an editor tab (VS Code-style diff tab)
+function openFileDiff(path) {
+  const tabKey = 'diff::' + path;
+  if (_editorTabs.has(tabKey)) { _activateTab(tabKey); return; }
+  const fileDiff = _extractFileDiff(_lastFullDiff, path);
+  _editorTabs.set(tabKey, { type: 'diff', content: fileDiff, path });
+  _renderTabBar();
+  _activateTab(tabKey);
+}
+
+function renderResults(r) {
+  const anaOk  = !r.analysis || r.analysis.success;
+  _lastFullDiff = r.git_diff || '';  // Store full diff globally
+  _pendingProject = r.pending_review ? r.project_id : null;
+
+  const hdr = document.getElementById('res-header');
+  if (r.pending_review) {
+    hdr.innerHTML = `
+      <span class="badge bw" style="display:inline-flex;align-items:center;gap:4px">${ic.alert()} Review required — ${r.plan?.files?.length||0} file(s) will change</span>
+      <span class="badge ${anaOk?'bs':'bw'}" style="display:inline-flex;align-items:center;gap:4px">${anaOk?ic.check():ic.alert()} Analysis ${anaOk?'OK':(r.analysis?.findings?.length||0)+' issues'}</span>
+      <span style="flex:1"></span>
+      <button onclick="acceptChanges()" style="background:#28a745;color:#fff;border-color:#28a745;display:inline-flex;align-items:center;gap:6px;font-weight:600"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Accept</button>
+      <button onclick="rejectChanges()" style="background:var(--bg-panel);color:var(--red);border-color:var(--red);display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Reject</button>`;
+  } else {
+    hdr.innerHTML = `
+      <span class="badge ${anaOk?'bs':'bw'}" style="display:inline-flex;align-items:center;gap:4px">${anaOk?ic.check():ic.alert()} Analysis ${anaOk?'OK':(r.analysis?.findings?.length||0)+' issues'}</span>
+      <span class="badge bi" style="display:inline-flex;align-items:center;gap:4px">${ic.repeat()} ${r.attempts_used} attempt${r.attempts_used!==1?'s':''}</span>
+      <span style="font-size:12px;color:var(--text-dim);margin-left:6px">${esc(r.plan?.summary||'')}</span>`;
+  }
+
+  // Diff
+  renderDiff(r.git_diff);
+
+  // Analysis
+  const ta = document.getElementById('tb-analysis');
+  ta.innerHTML = r.analysis?.findings?.length
+    ? r.analysis.findings.map(f => `<div class="finding" style="display:flex;align-items:flex-start;gap:8px">${ic.alert()}<span>${esc(f)}</span></div>`).join('')
+    : `<div class="empty">${ic.check(32)}<span>No hygiene issues found</span></div>`;
+
+  // Files changed
+  const tf = document.getElementById('tb-files');
+  tf.innerHTML = r.plan?.files?.length
+    ? r.plan.files.map(f => `
+        <div class="fc-item" onclick="openFileDiff('${f.path.replace(/'/g, "\'")}')"; style="cursor:pointer">
+          <span class="op op-${f.operation}">${f.operation.toUpperCase()}</span>
+          <span style="font-family:monospace;font-size:12px">${esc(f.path)}</span>
+        </div>`).join('')
+    : `<div class="empty"><span>No files changed</span></div>`;
+
+  tab('diff');
+}
+
+function renderDiff(text) {
+  const el = document.getElementById('tb-diff');
+  if (!text?.trim()) { el.innerHTML = `<div class="empty"><span>No diff available</span></div>`; return; }
+  const v = document.createElement('div');
+  v.className = 'diff-viewer';
+  _renderDiffInto(v, text);
+  el.innerHTML = ''; el.appendChild(v);
+}
+
+// ─── tabs ────────────────────────────────────────────────────────────────────
+function tab(name) {
+  const names = ['diff','analysis','files'];
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', names[i] === name));
+  document.querySelectorAll('.tab-body').forEach(b => b.classList.remove('active'));
+  document.getElementById('tb-' + name).classList.add('active');
+}
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
+async function api(url, opts = {}) {
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(e.detail || r.statusText);
+  }
+  return r.json();
+}
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function opt(v, t) { const o = document.createElement('option'); o.value = v; o.textContent = t; return o; }
+function showOverlay(on, msg = '', agentMode = false) {
+  document.getElementById('overlay').classList.toggle('on', on);
+  if (!on) return;
+  const titleEl = document.getElementById('overlay-title');
+  const msgEl   = document.getElementById('overlay-msg');
+  const logEl   = document.getElementById('run-log');
+  if (agentMode) {
+    titleEl.textContent  = 'Agent running…';
+    msgEl.style.display  = 'none';
+    logEl.style.display  = 'flex';
+    logEl.innerHTML      = '';
+  } else {
+    titleEl.textContent  = 'Processing…';
+    msgEl.style.display  = '';
+    logEl.style.display  = 'none';
+    if (msg) msgEl.textContent = msg;
+  }
+}
+
+function appendLog(msg) {
+  const logEl = document.getElementById('run-log');
+  const ts    = new Date().toLocaleTimeString('en-US', { hour12: false });
+  const line  = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="log-ts">${ts}</span><span class="log-txt">${esc(msg)}</span>`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+init();
+_initResizers();
+</script>
+</body>
+</html>
