@@ -7,8 +7,7 @@ from pathlib import Path
 from pathlib import PurePosixPath
 
 from agent.config import ProjectConfig
-from agent.models import PatchFile, PatchPlan, UserStory
-from agent.materializer import PatchMaterializer
+from agent.models import PatchFile, PatchPlan, PatchProposalPlan, UserStory
 from agent.paths import resolve_within
 
 _SECRET = re.compile(
@@ -149,7 +148,7 @@ class PromptGuardService:
             source_files=source_files,
         )
 
-    def restore_plan(self, context: ProtectedPromptContext, plan: PatchPlan) -> PatchPlan:
+    def restore_plan(self, context: ProtectedPromptContext, plan: PatchProposalPlan) -> PatchProposalPlan:
         """Restore protected values while validating exact edit proposals."""
         for patch_file in plan.files:
             operation = patch_file.operation.lower()
@@ -160,25 +159,16 @@ class PromptGuardService:
                 if not source.complete:
                     raise ValueError("SOURCE_CONTEXT_TRUNCATED")
             if operation == "delete":
-                if patch_file.content or patch_file.edits or _PROTECTED_LIKE.search(patch_file.content or ""):
+                if patch_file.content or patch_file.edits:
                     raise ValueError("PROTECTED_CONTENT_CHANGED")
                 continue
             if operation == "create":
                 if _PROTECTED_LIKE.search(patch_file.content or ""):
                     raise ValueError("PROTECTED_CONTENT_CHANGED")
                 continue
-            expected = source.protected_values
             for edit in patch_file.edits:
-                if not edit.before or source.provider_content.count(edit.before) != 1:
-                    raise ValueError("EXACT_ANCHOR_NOT_UNIQUE")
-                placeholders = _PROTECTED_LIKE.findall(edit.before) + _PROTECTED_LIKE.findall(edit.after)
-                if any(token not in expected for token in placeholders):
+                if _PROTECTED_LIKE.search(edit.before) or _PROTECTED_LIKE.search(edit.after):
                     raise ValueError("PROTECTED_CONTENT_CHANGED")
-                if _PROTECTED_PLACEHOLDER.findall(edit.before) != _PROTECTED_PLACEHOLDER.findall(edit.after):
-                    raise ValueError("PROTECTED_CONTENT_CHANGED")
-                for placeholder, original in expected.items():
-                    edit.before = edit.before.replace(placeholder, original)
-                    edit.after = edit.after.replace(placeholder, original)
         return plan
 
     def validate_minimality(
@@ -198,8 +188,19 @@ class PromptGuardService:
                 raise ValueError("SOURCE_CONTEXT_MISSING")
             if not source.complete:
                 raise ValueError("SOURCE_CONTEXT_TRUNCATED")
-            proposed = PatchMaterializer.materialize_content(source.original_content, patch_file)
-            if self._has_unrelated_whitespace_change(source.original_content, proposed):
+            if self._has_unrelated_whitespace_change(source.original_content, patch_file.content or ""):
+                raise ValueError("UNRELATED_FORMATTING_CHANGED")
+        return plan
+
+    def validate_materialized_minimality(self, project, plan: PatchPlan, story: UserStory) -> PatchPlan:
+        if self._formatting_requested(story):
+            return plan
+        root = Path(project.repo_root).resolve()
+        for patch_file in plan.files:
+            if patch_file.operation.lower() != "modify":
+                continue
+            source = resolve_within(root, patch_file.path).read_text(encoding="utf-8")
+            if self._has_unrelated_whitespace_change(source, patch_file.content or ""):
                 raise ValueError("UNRELATED_FORMATTING_CHANGED")
         return plan
 
@@ -408,16 +409,10 @@ class PatchGuardService:
             if op in {"modify", "delete"} and not exists:
                 raise ValueError(f"{op.capitalize()} target does not exist: {pf.path}")
             if op == "delete":
-                if pf.content is not None or pf.edits:
-                    raise ValueError(f"delete must not contain content or edits: {pf.path}")
-            elif op == "create":
-                if not pf.content or not pf.content.strip() or pf.edits:
-                    raise ValueError(f"create requires content only: {pf.path}")
-            elif pf.content is not None or not pf.edits:
-                raise ValueError(f"modify requires exact edits and no content: {pf.path}")
-            for edit in pf.edits:
-                if not edit.before:
-                    raise ValueError(f"exact edit anchor cannot be empty: {pf.path}")
+                if pf.content is not None:
+                    raise ValueError(f"content must be null/empty for delete: {pf.path}")
+            elif not pf.content or not pf.content.strip():
+                raise ValueError(f"content is required for {op}: {pf.path}")
             ext = rel.rsplit(".", 1)[-1].lower() if "." in rel else ""
             if ext not in allowed_exts:
                 raise ValueError(f"Extension not allowed: {pf.path}")

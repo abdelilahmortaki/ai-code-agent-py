@@ -24,18 +24,28 @@ class ExactEdit(BaseModel):
     before: str
     after: str
 
-class PatchProposal(BaseModel):
+class ProposalFile(BaseModel):
     path: str
     operation: str
     content: Optional[str] = None
     edits: list[ExactEdit] = []
 
-PatchFile = PatchProposal
+class PatchProposalPlan(BaseModel):
+    storyId: str
+    summary: str
+    files: list[ProposalFile]
+    tests: list[str] = []
+    notes: list[str] = []
+
+class PatchFile(BaseModel):
+    path: str
+    operation: str
+    content: Optional[str] = None
 
 class PatchPlan(BaseModel):
     storyId: str
     summary: str
-    files: list[PatchProposal]
+    files: list[PatchFile]
     tests: list[str] = []
     notes: list[str] = []
 
