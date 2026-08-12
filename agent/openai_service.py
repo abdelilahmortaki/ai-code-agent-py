@@ -59,7 +59,8 @@ class OpenAiService:
     ) -> PatchPlan:
         context = self.prompt_guard.build_prompt(project, story, relevant_files, static_analysis)
         plan = self._call_structured(context.prompt, "spring_boot_patch_plan")
-        return self.prompt_guard.restore_plan(context, plan)
+        plan = self.prompt_guard.restore_plan(context, plan)
+        return self.prompt_guard.validate_minimality(context, plan, story)
 
     def generate_fix_plan(self, ctx: TestFailureContext) -> PatchPlan:
         prompt = (

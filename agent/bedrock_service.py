@@ -133,7 +133,8 @@ class BedrockService:
     ) -> PatchPlan:
         context = self.prompt_guard.build_prompt(project, story, relevant_files, static_analysis)
         plan = self._call(story.id, context.prompt + "\n\n" + _SCHEMA_HINT, log_callback)
-        return self.prompt_guard.restore_plan(context, plan)
+        plan = self.prompt_guard.restore_plan(context, plan)
+        return self.prompt_guard.validate_minimality(context, plan, story)
 
     def generate_fix_plan(self, ctx: TestFailureContext, log_callback: Callable[[str], None] = _noop) -> PatchPlan:
         prompt = (

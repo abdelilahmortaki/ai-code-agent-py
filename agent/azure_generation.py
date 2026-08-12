@@ -111,7 +111,8 @@ class AzureOpenAIGenerationProvider:
     ) -> PatchPlan:
         context = self._prompt_guard.build_prompt(project, story, relevant_files, static_analysis)
         plan = self._generate(story.id, context.prompt, log_callback)
-        return self._prompt_guard.restore_plan(context, plan)
+        plan = self._prompt_guard.restore_plan(context, plan)
+        return self._prompt_guard.validate_minimality(context, plan, story)
 
     def generate_fix_plan(
         self,
