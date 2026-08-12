@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
+import posixpath
 import re
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -15,12 +16,21 @@ _AWS_KEY = re.compile(r"AKIA[0-9A-Z]{16}")
 _GENERIC_TOKEN = re.compile(r"[A-Za-z0-9_\-]{24,}")
 _PROTECTED_PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9_-])__PROTECTED_\d{4}__(?![A-Za-z0-9_-])")
 _PROTECTED_LIKE = re.compile(r"__PROTECTED_[A-Za-z0-9_-]+__")
+_PER_FILE_CONTEXT_LIMIT = 12_000
+_PROMPT_CONTEXT_LIMIT = 64_000
+
+
+@dataclass(frozen=True)
+class ProtectedFileContext:
+    complete: bool
+    provider_content: str = field(repr=False)
+    protected_values: dict[str, str] = field(repr=False)
 
 
 @dataclass(frozen=True)
 class ProtectedPromptContext:
     prompt: str
-    protected_by_file: dict[str, dict[str, str]] = field(repr=False)
+    source_files: dict[str, ProtectedFileContext] = field(repr=False)
 
 
 class PromptGuardService:
@@ -46,7 +56,7 @@ class PromptGuardService:
         relevant_files: list[tuple[str, str]],  # (relative_path, full_content)
         static_analysis: str,
     ) -> ProtectedPromptContext:
-        protected_by_file: dict[str, dict[str, str]] = {}
+        source_files: dict[str, ProtectedFileContext] = {}
         next_placeholder = 1
         parts = [
             "ROLE: senior Java/Spring Boot engineer",
@@ -74,40 +84,60 @@ class PromptGuardService:
             "",
             "RELEVANT_CODE_CONTEXT (full file contents):",
         ]
+        prompt = "\n".join(parts)
         for file_path, content in relevant_files:
-            parts.append(f"--- FILE: {file_path} ---")
             protected, mapping, next_placeholder = self._protect_file(content, next_placeholder)
-            protected_by_file[self._file_key(file_path)] = mapping
-            parts.append(self._limit(protected, 12000))
-            parts.append("")
+            file_key = self._file_key(file_path)
+            if len(protected) > _PER_FILE_CONTEXT_LIMIT:
+                source_files[file_key] = ProtectedFileContext(False, "", {})
+                continue
+
+            section = f"--- FILE: {file_path} ---\n{protected}"
+            candidate = f"{prompt}\n{section}"
+            if len(candidate) > _PROMPT_CONTEXT_LIMIT:
+                source_files[file_key] = ProtectedFileContext(False, "", {})
+                continue
+
+            prompt = candidate
+            source_files[file_key] = ProtectedFileContext(True, protected, mapping)
+
         return ProtectedPromptContext(
-            prompt=self._limit("\n".join(parts), 64000),
-            protected_by_file=protected_by_file,
+            prompt=prompt,
+            source_files=source_files,
         )
 
     def restore_plan(self, context: ProtectedPromptContext, plan: PatchPlan) -> PatchPlan:
         """Reject changed placeholders, then restore exact local source values."""
         for patch_file in plan.files:
-            content = patch_file.content
-            expected = context.protected_by_file.get(self._file_key(patch_file.path), {})
-            if patch_file.operation.lower() == "modify" and expected and not content:
-                raise ValueError("PROTECTED_CONTENT_CHANGED")
-            if not content:
+            operation = patch_file.operation.lower()
+            source = context.source_files.get(self._file_key(patch_file.path))
+            content = patch_file.content or ""
+
+            if operation in {"modify", "delete"}:
+                if source is None:
+                    raise ValueError("SOURCE_CONTEXT_MISSING")
+                if not source.complete:
+                    raise ValueError("SOURCE_CONTEXT_TRUNCATED")
+
+            if operation == "delete":
+                if _PROTECTED_LIKE.search(content):
+                    raise ValueError("PROTECTED_CONTENT_CHANGED")
                 continue
 
+            if operation != "modify":
+                if _PROTECTED_LIKE.search(content):
+                    raise ValueError("PROTECTED_CONTENT_CHANGED")
+                continue
+
+            expected = source.protected_values
             found = _PROTECTED_PLACEHOLDER.findall(content)
             if any(placeholder not in expected for placeholder in _PROTECTED_LIKE.findall(content)):
                 raise ValueError("PROTECTED_CONTENT_CHANGED")
-
-            if patch_file.operation.lower() != "modify":
-                if found:
-                    raise ValueError("PROTECTED_CONTENT_CHANGED")
-                continue
-
             if set(found) != set(expected) or any(found.count(placeholder) != 1 for placeholder in expected):
                 if expected:
                     raise ValueError("PROTECTED_CONTENT_CHANGED")
-                continue
+            elif not self._protected_positions_match(source.provider_content, content, expected):
+                raise ValueError("PROTECTED_CONTENT_CHANGED")
 
             for placeholder, original in expected.items():
                 content = content.replace(placeholder, original)
@@ -142,7 +172,7 @@ class PromptGuardService:
             return token
 
         def protect_secret(match: re.Match) -> str:
-            return f"{match.group('prefix')}{placeholder(match.group('value'))}"
+            return placeholder(match.group())
 
         sanitized = _SECRET.sub(protect_secret, text or "")
         sanitized = _AWS_KEY.sub(lambda match: placeholder(match.group()), sanitized)
@@ -157,7 +187,33 @@ class PromptGuardService:
 
     @staticmethod
     def _file_key(path: str) -> str:
-        return PurePosixPath(path.replace("\\", "/")).as_posix()
+        return PurePosixPath(posixpath.normpath(path.replace("\\", "/"))).as_posix()
+
+    @staticmethod
+    def _protected_positions_match(provider_content: str, content: str, expected: dict[str, str]) -> bool:
+        for placeholder in expected:
+            provider_index = provider_content.find(placeholder)
+            content_index = content.find(placeholder)
+            if provider_index < 0 or content_index < 0:
+                return False
+
+            provider_line_start = provider_content.rfind("\n", 0, provider_index) + 1
+            provider_line_end = provider_content.find("\n", provider_index + len(placeholder))
+            if provider_line_end < 0:
+                provider_line_end = len(provider_content)
+            content_line_start = content.rfind("\n", 0, content_index) + 1
+            content_line_end = content.find("\n", content_index + len(placeholder))
+            if content_line_end < 0:
+                content_line_end = len(content)
+
+            provider_prefix = provider_content[provider_line_start:provider_index]
+            provider_suffix = provider_content[provider_index + len(placeholder):provider_line_end]
+            content_prefix = content[content_line_start:content_index]
+            content_suffix = content[content_index + len(placeholder):content_line_end]
+            if provider_prefix != content_prefix or provider_suffix != content_suffix:
+                return False
+
+        return True
 
     def _clean(self, s: str | None) -> str:
         return re.sub(r"\s+", " ", s or "").strip()
