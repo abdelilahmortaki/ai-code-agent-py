@@ -35,9 +35,15 @@ class BedrockGenerationProvider:
         relevant_files: list[tuple[str, str]],
         static_analysis: str,
         log_callback: Callable[[str], None] = _noop,
+        validation_feedback: str = "",
     ) -> PatchPlan:
         return self._service.generate_patch_plan(
-            project, story, relevant_files, static_analysis, log_callback
+            project,
+            story,
+            relevant_files,
+            static_analysis,
+            log_callback,
+            validation_feedback=validation_feedback,
         )
 
     def generate_fix_plan(
