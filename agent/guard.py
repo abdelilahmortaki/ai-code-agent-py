@@ -27,8 +27,17 @@ _PROTECTED_PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9_-])__PROTECTED_\d{4}__(?![A
 _PROTECTED_LIKE = re.compile(r"__PROTECTED_[A-Za-z0-9_-]+__")
 _PER_FILE_CONTEXT_LIMIT = 12_000
 _PROMPT_CONTEXT_LIMIT = 64_000
-_FORMATTING_INTENT = re.compile(
-    r"\b(?:format|formatting|reformat|whitespace|indentation|indent)\b|\bblank\s+lines?\b",
+_FORMATTING_NEGATION = re.compile(
+    r"\b(?:no|without)\s+(?:format(?:ting)?|whitespace)(?:\s+changes?)?\b"
+    r"|\bdo\s+not\s+(?:reformat|format|change|modify|fix|normalize|normalise|add|remove)\b"
+    r"|\bdon['’]?t\s+(?:reformat|format|change|modify|fix|normalize|normalise|add|remove)\b",
+    re.IGNORECASE,
+)
+_FORMATTING_POSITIVE = re.compile(
+    r"\b(?:reformat|format)\s+(?:this|the|a|all)?\s*(?:file|files?|code|source|document)\b"
+    r"|\bnormalize\s+whitespace\b"
+    r"|\b(?:fix\s*/\s*change|fix\s+or\s+change|fix|change|adjust|update)\s+(?:the\s+)?indentation\b"
+    r"|\b(?:add\s*/\s*remove|add\s+or\s+remove|add|remove)\s+blank\s+lines?\b",
     re.IGNORECASE,
 )
 
@@ -331,7 +340,7 @@ class PromptGuardService:
     @staticmethod
     def _formatting_requested(story: UserStory) -> bool:
         text = "\n".join([story.title, story.description, *story.acceptanceCriteria])
-        return bool(_FORMATTING_INTENT.search(text))
+        return not _FORMATTING_NEGATION.search(text) and bool(_FORMATTING_POSITIVE.search(text))
 
     @staticmethod
     def _has_unrelated_whitespace_change(original: str, proposed: str) -> bool:
@@ -340,6 +349,8 @@ class PromptGuardService:
 
         original_lines = original.splitlines()
         proposed_lines = proposed.splitlines()
+        if original.endswith(("\n", "\r")) != proposed.endswith(("\n", "\r")):
+            return True
         original_normalized = [re.sub(r"\s+", "", line) for line in original_lines]
         proposed_normalized = [re.sub(r"\s+", "", line) for line in proposed_lines]
         matcher = difflib.SequenceMatcher(
@@ -361,8 +372,20 @@ class PromptGuardService:
                 return True
             if any(not value for value in proposed_normalized[proposed_start:proposed_end]):
                 return True
+            for offset in range(min(original_end - original_start, proposed_end - proposed_start)):
+                original_line = original_lines[original_start + offset]
+                proposed_line = proposed_lines[proposed_start + offset]
+                if PromptGuardService._edge_whitespace(original_line) != PromptGuardService._edge_whitespace(proposed_line):
+                    return True
 
         return False
+
+    @staticmethod
+    def _edge_whitespace(line: str) -> tuple[str, str]:
+        return (
+            line[: len(line) - len(line.lstrip())],
+            line[len(line.rstrip()):],
+        )
 
 
 class PatchGuardService:
