@@ -9,37 +9,14 @@ import boto3
 from agent.config import BedrockConfig, ProjectConfig
 from agent.guard import PromptGuardService
 from agent.models import PatchFile, PatchPlan, TestFailureContext, UserStory
+from agent.patch_schema import PATCH_SCHEMA_HINT
 
 _log = logging.getLogger(__name__)
 
 def _noop(msg: str) -> None:
     pass
 
-# Inline JSON schema description injected into every prompt so the model
-# knows exactly what structure to return (Bedrock has no native schema mode).
-_SCHEMA_HINT = """
-Return ONLY a valid JSON object — no prose, no markdown fences — with this exact structure:
-{
-  "storyId": "<story id string>",
-  "summary": "<one-sentence technical summary>",
-  "files": [
-    {
-      "path": "<repo-relative path, e.g. src/main/java/com/example/demo/MyClass.java>",
-      "operation": "<create | modify | delete>",
-      "content": "<complete new file content as a single string, or null for delete>"
-    }
-  ],
-  "tests": ["<test description 1>", "..."],
-  "notes": ["<note 1>", "..."]
-}
-Rules:
-- For \"modify\" or \"create\", \"content\" must be the FULL file content (not a diff).
-- For \"delete\", \"content\" must be null.
-- Only touch files that are strictly necessary.
-- For modify operations, preserve all unrelated content exactly, including blank lines, indentation, comments, and ordering.
-- Do not reformat, normalize documentation, remove apparently redundant whitespace, or clean up formatting.
-- Change only what the story explicitly requires.
-"""
+_SCHEMA_HINT = PATCH_SCHEMA_HINT
 
 
 def _repair_json(text: str) -> str:

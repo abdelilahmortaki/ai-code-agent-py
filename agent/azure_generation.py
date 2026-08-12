@@ -10,41 +10,12 @@ from agent.config import ProjectConfig
 from agent.guard import PromptGuardService
 from agent.models import PatchFile, PatchPlan, TestFailureContext, UserStory
 from agent.providers import NormalizedUsage
+from agent.patch_schema import PATCH_PLAN_SCHEMA, PATCH_SCHEMA_HINT
 
 
-_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "storyId": {"type": "string"},
-        "summary": {"type": "string"},
-        "files": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "path": {"type": "string"},
-                    "operation": {"type": "string", "enum": ["create", "modify", "delete"]},
-                    "content": {"anyOf": [{"type": "string"}, {"type": "null"}]},
-                },
-                "required": ["path", "operation", "content"],
-            },
-        },
-        "tests": {"type": "array", "items": {"type": "string"}},
-        "notes": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["storyId", "summary", "files", "tests", "notes"],
-}
+_SCHEMA = PATCH_PLAN_SCHEMA
 
-_SCHEMA_HINT = """
-Return only the JSON object required by the response schema. For create and modify,
-content must be the complete file content. For delete, content must be null.
-Only touch files strictly necessary for the story.
-For modify, preserve all unrelated content exactly, including blank lines, indentation,
-comments, and ordering. Do not reformat, normalize documentation, remove apparently
-redundant whitespace, or clean up formatting. Change only what the story explicitly requires.
-"""
+_SCHEMA_HINT = PATCH_SCHEMA_HINT
 
 
 def _noop(msg: str) -> None:

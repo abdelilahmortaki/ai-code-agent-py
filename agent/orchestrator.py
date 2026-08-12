@@ -10,6 +10,7 @@ from agent.git_service import GitDiffService
 from agent.guard import PromptGuardService
 from agent.index import SemanticIndexService
 from agent.models import PatchPlan, PatchResult, ProjectOverview, TestFailureContext, UserStory
+from agent.materializer import PatchMaterializer
 from agent.patch import PatchApplierService
 from agent.providers import GenerationProvider
 from agent.runner import TestRunner
@@ -54,6 +55,7 @@ class AgentOrchestrator:
         self.static_analysis = static_analysis
         self.test_runner = test_runner
         self.story_reader = story_reader
+        self.materializer = PatchMaterializer()
         # Pending plans awaiting user accept/reject — keyed by project_id
         self._pending_plans: dict[str, object] = {}
 
@@ -115,12 +117,9 @@ class AgentOrchestrator:
         """Compute a unified diff between current and proposed file contents
         without touching the filesystem."""
         output: list[str] = []
-        for pf in plan_files:
+        for pf in self.materializer.materialize(project, plan_files):
             current = self.codebase.read_file(project, pf.path) or ""
-            if pf.operation == "delete":
-                new_content = ""
-            else:
-                new_content = pf.content or ""
+            new_content = pf.content or ""
             old_lines = current.splitlines(keepends=True)
             new_lines = new_content.splitlines(keepends=True)
             diff = difflib.unified_diff(

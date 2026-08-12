@@ -8,35 +8,9 @@ import httpx
 from agent.config import OpenAiConfig, ProjectConfig
 from agent.guard import PromptGuardService
 from agent.models import PatchFile, PatchPlan, TestFailureContext, UserStory
+from agent.patch_schema import PATCH_PLAN_SCHEMA
 
-# JSON Schema for structured OpenAI output — mirrors PatchPlanSchemaFactory.java
-_PATCH_PLAN_SCHEMA: dict = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "storyId":  {"type": "string", "description": "Story identifier"},
-        "summary":  {"type": "string", "description": "Technical summary of changes"},
-        "files": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "path":      {"type": "string", "description": "Relative file path"},
-                    "operation": {"type": "string", "enum": ["create", "modify", "delete"]},
-                    "content":   {
-                        "anyOf": [{"type": "string"}, {"type": "null"}],
-                        "description": "Complete new file content (null for delete)",
-                    },
-                },
-                "required": ["path", "operation", "content"],
-            },
-        },
-        "tests": {"type": "array", "items": {"type": "string"}},
-        "notes": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["storyId", "summary", "files", "tests", "notes"],
-}
+_PATCH_PLAN_SCHEMA: dict = PATCH_PLAN_SCHEMA
 
 
 class OpenAiService:
