@@ -96,7 +96,7 @@ _run_queues: dict[str, asyncio.Queue] = {}
 # API
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="AI Code Agent (Bedrock)", version="1.0.0")
+app = FastAPI(title="CardPro Code Agent (Bedrock)", version="1.0.0")
 
 
 @app.get("/api/agent/projects", response_model=list[ProjectOverview])

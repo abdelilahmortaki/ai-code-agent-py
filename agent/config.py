@@ -52,7 +52,7 @@ class BedrockConfig(BaseModel):
     model_id: str = "qwen.qwen3-coder-30b-a3b-v1:0"
     embeddings_model_id: str = "amazon.titan-embed-text-v2:0"
     temperature: float = 0.1
-    max_tokens: int = 16384
+    max_tokens: int = 32384
     expected_account_id: str = ""
 
 

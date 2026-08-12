@@ -3,7 +3,7 @@ bedrock:
   model_id: "qwen.qwen3-coder-30b-a3b-v1:0"       # override with BEDROCK_MODEL_ID
   embeddings_model_id: "amazon.titan-embed-text-v2:0"
   temperature: 0.1                                 # override with BEDROCK_TEMPERATURE
-  max_tokens: 16384                                # override with BEDROCK_MAX_TOKENS
+  max_tokens: 32384                                # override with BEDROCK_MAX_TOKENS
 
 agent:
   active_project: ""
