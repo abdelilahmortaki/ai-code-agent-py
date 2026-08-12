@@ -18,15 +18,19 @@ class CodebaseService:
         docs: list[tuple[str, str]] = []
 
         for path in root.rglob("*"):
-            if not path.is_file():
-                continue
-            if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-                continue
             rel = path.relative_to(root).as_posix()
+            try:
+                target = resolve_within(root, rel)
+            except ValueError:
+                continue
+            if not target.is_file():
+                continue
+            if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
+                continue
             if self._is_excluded(rel, excluded):
                 continue
             try:
-                content = path.read_text(encoding="utf-8", errors="ignore")
+                content = target.read_text(encoding="utf-8", errors="ignore")
                 if content and not content.isspace():
                     docs.append((rel, self._limit(content, self.max_file_chars)))
             except Exception:
