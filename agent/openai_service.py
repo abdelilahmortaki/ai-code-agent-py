@@ -57,8 +57,9 @@ class OpenAiService:
         relevant_files: list[tuple[str, str]],  # (path, full_content)
         static_analysis: str,
     ) -> PatchPlan:
-        prompt = self.prompt_guard.build_prompt(project, story, relevant_files, static_analysis)
-        return self._call_structured(prompt, "spring_boot_patch_plan")
+        context = self.prompt_guard.build_prompt(project, story, relevant_files, static_analysis)
+        plan = self._call_structured(context.prompt, "spring_boot_patch_plan")
+        return self.prompt_guard.restore_plan(context, plan)
 
     def generate_fix_plan(self, ctx: TestFailureContext) -> PatchPlan:
         prompt = (

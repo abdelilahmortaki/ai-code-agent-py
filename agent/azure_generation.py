@@ -41,6 +41,9 @@ _SCHEMA_HINT = """
 Return only the JSON object required by the response schema. For create and modify,
 content must be the complete file content. For delete, content must be null.
 Only touch files strictly necessary for the story.
+For modify, preserve all unrelated content exactly, including blank lines, indentation,
+comments, and ordering. Do not reformat, normalize documentation, remove apparently
+redundant whitespace, or clean up formatting. Change only what the story explicitly requires.
 """
 
 
@@ -106,8 +109,9 @@ class AzureOpenAIGenerationProvider:
         static_analysis: str,
         log_callback: Callable[[str], None] = _noop,
     ) -> PatchPlan:
-        prompt = self._prompt_guard.build_prompt(project, story, relevant_files, static_analysis)
-        return self._generate(story.id, prompt, log_callback)
+        context = self._prompt_guard.build_prompt(project, story, relevant_files, static_analysis)
+        plan = self._generate(story.id, context.prompt, log_callback)
+        return self._prompt_guard.restore_plan(context, plan)
 
     def generate_fix_plan(
         self,
