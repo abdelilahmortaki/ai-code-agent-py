@@ -153,6 +153,9 @@ class PromptGuardService:
             found = _PROTECTED_PLACEHOLDER.findall(content)
             if any(placeholder not in expected for placeholder in _PROTECTED_LIKE.findall(content)):
                 raise ValueError("PROTECTED_CONTENT_CHANGED")
+            source_order = _PROTECTED_PLACEHOLDER.findall(source.provider_content)
+            if found != source_order:
+                raise ValueError("PROTECTED_CONTENT_CHANGED")
             if set(found) != set(expected) or any(found.count(placeholder) != 1 for placeholder in expected):
                 if expected:
                     raise ValueError("PROTECTED_CONTENT_CHANGED")
