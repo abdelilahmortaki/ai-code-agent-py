@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 # Load .env from the project root (ai-code-agent-py/.env) before anything else
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -66,6 +66,13 @@ class BedrockConfig(BaseModel):
     expected_account_id: str = ""
 
 
+class AzureConfig(BaseModel):
+    endpoint: str = ""
+    api_key: SecretStr = SecretStr("")
+    deployment: str = ""
+    embedding_deployment: str = ""
+
+
 class OpenAiConfig(BaseModel):  # kept for backward-compat, unused when Bedrock is active
     api_key: str = ""
     base_url: str = "https://api.openai.com/v1"
@@ -74,7 +81,9 @@ class OpenAiConfig(BaseModel):  # kept for backward-compat, unused when Bedrock 
 
 
 class Settings(BaseModel):
+    ai_provider: str = "bedrock"
     bedrock: BedrockConfig = BedrockConfig()
+    azure: AzureConfig = AzureConfig()
     agent: AgentConfig = AgentConfig()
 
     @classmethod
@@ -83,6 +92,28 @@ class Settings(BaseModel):
         if Path(config_path).exists():
             with open(config_path, encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
+
+        provider = (os.getenv("AI_PROVIDER") or "bedrock").strip().lower()
+        if provider not in {"azure", "bedrock"}:
+            raise ValueError("AI_PROVIDER must be one of: azure, bedrock")
+
+        azure_cfg = AzureConfig()
+        if provider == "azure":
+            required = {
+                "AZURE_OPENAI_ENDPOINT": os.getenv("AZURE_OPENAI_ENDPOINT"),
+                "AZURE_OPENAI_API_KEY": os.getenv("AZURE_OPENAI_API_KEY"),
+                "AZURE_OPENAI_DEPLOYMENT": os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+                "AZURE_OPENAI_EMBEDDING_DEPLOYMENT": os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT"),
+            }
+            missing = [name for name, value in required.items() if not value or not value.strip()]
+            if missing:
+                raise ValueError(f"Missing required Azure configuration: {', '.join(missing)}")
+            azure_cfg = AzureConfig(
+                endpoint=required["AZURE_OPENAI_ENDPOINT"].strip(),
+                api_key=SecretStr(required["AZURE_OPENAI_API_KEY"]),
+                deployment=required["AZURE_OPENAI_DEPLOYMENT"].strip(),
+                embedding_deployment=required["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"].strip(),
+            )
 
         bd = data.get("bedrock", {})
         bedrock_cfg = BedrockConfig(
@@ -101,4 +132,4 @@ class Settings(BaseModel):
             projects=[ProjectConfig(**p) for p in projects_data],
         )
 
-        return cls(bedrock=bedrock_cfg, agent=agent_cfg)
+        return cls(ai_provider=provider, bedrock=bedrock_cfg, azure=azure_cfg, agent=agent_cfg)
