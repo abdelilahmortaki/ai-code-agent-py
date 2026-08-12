@@ -4,6 +4,7 @@ from pathlib import Path
 
 from agent.config import ProjectConfig
 from agent.models import PatchFile, UserStory
+from agent.paths import resolve_within
 
 _SECRET = re.compile(r"(?i)(api[_-]?key|secret|token|password|passwd|bearer)\s*[:=]\s*\S+")
 _AWS_KEY = re.compile(r"AKIA[0-9A-Z]{16}")
@@ -100,9 +101,10 @@ class PatchGuardService:
             if not pf.operation or not pf.operation.strip():
                 raise ValueError("Patch entry has an empty operation")
 
-            target = (root / pf.path).resolve()
-            if not str(target).startswith(str(root)):
-                raise ValueError(f"Path traversal attempt blocked: {pf.path}")
+            try:
+                target = resolve_within(root, pf.path)
+            except ValueError as exc:
+                raise ValueError(f"Path traversal attempt blocked: {pf.path}") from exc
 
             rel = target.relative_to(root).as_posix()
             for part in rel.split("/")[:-1]:
