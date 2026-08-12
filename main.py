@@ -67,11 +67,11 @@ for _p in _load_registry():
         settings.agent.projects.append(_p)
 
 codebase        = CodebaseService(max_file_chars=settings.agent.max_file_chars)
-embeddings      = EmbeddingsService(settings.bedrock)        # Amazon Titan via Bedrock
-semantic_index  = SemanticIndexService(codebase, embeddings)
+embedding_provider = EmbeddingsService(settings.bedrock)     # Amazon Titan via Bedrock
+semantic_index  = SemanticIndexService(codebase, embedding_provider)
 prompt_guard    = PromptGuardService()
 patch_guard     = PatchGuardService()
-bedrock_svc     = BedrockService(settings.bedrock, prompt_guard)  # Qwen via Bedrock
+generation_provider = BedrockService(settings.bedrock, prompt_guard)  # Qwen via Bedrock
 patch_applier   = PatchApplierService(patch_guard)
 git_diff        = GitDiffService()
 static_analysis = StaticAnalysisService(codebase)
@@ -82,7 +82,7 @@ orchestrator = AgentOrchestrator(
     config=settings.agent,
     codebase=codebase,
     semantic_index=semantic_index,
-    openai_service=bedrock_svc,     # same interface, Bedrock implementation
+    generation_provider=generation_provider,
     patch_applier=patch_applier,
     git_diff=git_diff,
     static_analysis=static_analysis,
