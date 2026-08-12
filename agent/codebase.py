@@ -2,6 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.config import ProjectConfig
+from agent.paths import resolve_within
 
 SUPPORTED_EXTENSIONS = {
     ".java", ".xml", ".yml", ".yaml", ".properties", ".json", ".md", ".txt"
@@ -41,9 +42,9 @@ class CodebaseService:
     def read_file(self, project: ProjectConfig, relative_path: str) -> str | None:
         """Read the full content of a single file (capped at max_file_chars)."""
         root = Path(project.repo_root).resolve()
-        target = (root / relative_path).resolve()
-        # Guard against path traversal
-        if not str(target).startswith(str(root)):
+        try:
+            target = resolve_within(root, relative_path)
+        except ValueError:
             return None
         try:
             content = target.read_text(encoding="utf-8", errors="ignore")

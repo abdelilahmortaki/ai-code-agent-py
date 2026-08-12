@@ -4,6 +4,7 @@ from pathlib import Path
 from agent.config import ProjectConfig
 from agent.guard import PatchGuardService
 from agent.models import PatchFile
+from agent.paths import resolve_within
 
 
 class PatchApplierService:
@@ -16,7 +17,7 @@ class PatchApplierService:
         touched: list[str] = []
 
         for pf in files:
-            target = (root / pf.path).resolve()
+            target = resolve_within(root, pf.path)
             if pf.operation.lower() == "delete":
                 if target.exists():
                     target.unlink()

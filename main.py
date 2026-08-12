@@ -17,6 +17,7 @@ from agent.guard import PatchGuardService, PromptGuardService
 from agent.index import EmbeddingsService, SemanticIndexService
 from agent.models import PatchResult, ProjectOverview, UserStory
 from agent.orchestrator import AgentOrchestrator
+from agent.paths import resolve_within
 from agent.patch import PatchApplierService
 from agent.runner import TestRunner
 from agent.stories import StoryFileReader
@@ -142,10 +143,19 @@ def upload_project(req: _UploadRequest):
     upload_root = Path(".agent/uploads") / project_id
 
     for f in req.files:
+        normalized_path = f.path.replace("\\", "/")
+        try:
+            resolve_within(upload_root, normalized_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid file path: {f.path}") from exc
+
         # Strip the top-level folder name: "myapp/src/..." -> "src/..."
-        parts = Path(f.path.replace("\\", "/")).parts
+        parts = Path(normalized_path).parts
         rel = Path(*parts[1:]) if len(parts) > 1 else Path(parts[0])
-        dest = upload_root / rel
+        try:
+            dest = resolve_within(upload_root, rel)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid file path: {f.path}") from exc
         dest.parent.mkdir(parents=True, exist_ok=True)
         try:
             dest.write_text(f.content, encoding="utf-8")
