@@ -9,6 +9,10 @@ from pydantic import BaseModel
 # Load .env from the project root (ai-code-agent-py/.env) before anything else
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+SUPPORTED_EXTENSIONS = {
+    ".java", ".xml", ".yml", ".yaml", ".properties", ".json", ".md", ".txt"
+}
+
 
 class ProjectConfig(BaseModel):
     id: str
@@ -35,6 +39,9 @@ class AgentConfig(BaseModel):
     max_attempts: int = 3
     max_context_files: int = 6   # number of full files sent to OpenAI (not chunks)
     max_file_chars: int = 12000
+    upload_allowed_extensions: list[str] = [ext.lstrip(".") for ext in SUPPORTED_EXTENSIONS]
+    upload_max_file_bytes: int = 153600
+    upload_max_total_bytes: int = 10485760
     projects: list[ProjectConfig] = []
 
     def project_by_id(self, project_id: str) -> ProjectConfig:
@@ -45,6 +52,9 @@ class AgentConfig(BaseModel):
             if p.id.lower() == target_id.lower():
                 return p
         raise ValueError(f"Project not found: {project_id}")
+
+    def normalized_upload_allowed_extensions(self) -> set[str]:
+        return {f".{ext.lstrip('.').lower()}" for ext in self.upload_allowed_extensions}
 
 
 class BedrockConfig(BaseModel):

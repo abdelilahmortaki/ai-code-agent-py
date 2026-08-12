@@ -10,4 +10,7 @@ agent:
   max_attempts: 3
   max_context_files: 4      # number of *full files* to include (was max_context_chunks)
   max_file_chars: 6000
+  upload_allowed_extensions: [java, xml, yml, yaml, properties, json, md, txt]
+  upload_max_file_bytes: 153600
+  upload_max_total_bytes: 10485760
   projects: []              # empty — projects are added at runtime via Browse Folder
