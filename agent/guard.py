@@ -10,7 +10,15 @@ from agent.models import PatchFile, PatchPlan, UserStory
 from agent.paths import resolve_within
 
 _SECRET = re.compile(
-    r"(?i)(?P<prefix>(?:api[_-]?key|secret|token|password|passwd|bearer)\s*[:=]\s*)(?P<value>\S+)"
+    r'''(?ix)
+    (?P<prefix>(?:api[_-]?key|secret|token|password|passwd|bearer)\s*[:=]\s*)
+    (?P<value>
+        "(?:\\.|[^"\\])*"
+        | '(?:\\.|[^'\\])*'
+        | "[^"\r\n]*
+        | '[^'\r\n]*
+        | \S+
+    )'''
 )
 _AWS_KEY = re.compile(r"AKIA[0-9A-Z]{16}")
 _GENERIC_TOKEN = re.compile(r"[A-Za-z0-9_\-]{24,}")
@@ -21,10 +29,17 @@ _PROMPT_CONTEXT_LIMIT = 64_000
 
 
 @dataclass(frozen=True)
+class ProtectedAnchor:
+    before: tuple[str, ...]
+    after: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ProtectedFileContext:
     complete: bool
     provider_content: str = field(repr=False)
     protected_values: dict[str, str] = field(repr=False)
+    anchors: dict[str, ProtectedAnchor] = field(default_factory=dict, repr=False)
 
 
 @dataclass(frozen=True)
@@ -99,7 +114,12 @@ class PromptGuardService:
                 continue
 
             prompt = candidate
-            source_files[file_key] = ProtectedFileContext(True, protected, mapping)
+            source_files[file_key] = ProtectedFileContext(
+                True,
+                protected,
+                mapping,
+                self._protected_anchors(protected, mapping),
+            )
 
         return ProtectedPromptContext(
             prompt=prompt,
@@ -136,7 +156,7 @@ class PromptGuardService:
             if set(found) != set(expected) or any(found.count(placeholder) != 1 for placeholder in expected):
                 if expected:
                     raise ValueError("PROTECTED_CONTENT_CHANGED")
-            elif not self._protected_positions_match(source.provider_content, content, expected):
+            elif not self._protected_positions_match(source, content, expected):
                 raise ValueError("PROTECTED_CONTENT_CHANGED")
 
             for placeholder, original in expected.items():
@@ -190,7 +210,38 @@ class PromptGuardService:
         return PurePosixPath(posixpath.normpath(path.replace("\\", "/"))).as_posix()
 
     @staticmethod
-    def _protected_positions_match(provider_content: str, content: str, expected: dict[str, str]) -> bool:
+    def _protected_anchors(provider_content: str, expected: dict[str, str]) -> dict[str, ProtectedAnchor]:
+        lines = provider_content.splitlines()
+        protected_lines = {
+            index for index, line in enumerate(lines)
+            if any(placeholder in line for placeholder in expected)
+        }
+        anchors: dict[str, ProtectedAnchor] = {}
+        for index, line in enumerate(lines):
+            if index not in protected_lines:
+                continue
+            start = index
+            while start > 0 and start - 1 in protected_lines:
+                start -= 1
+            end = index
+            while end + 1 in protected_lines:
+                end += 1
+            anchor = ProtectedAnchor(
+                before=tuple(lines[max(0, start - 2):start]),
+                after=tuple(lines[end + 1:min(len(lines), end + 3)]),
+            )
+            for placeholder in expected:
+                if placeholder in line:
+                    anchors[placeholder] = anchor
+        return anchors
+
+    @staticmethod
+    def _protected_positions_match(
+        source: ProtectedFileContext,
+        content: str,
+        expected: dict[str, str],
+    ) -> bool:
+        provider_content = source.provider_content
         for placeholder in expected:
             provider_index = provider_content.find(placeholder)
             content_index = content.find(placeholder)
@@ -211,6 +262,25 @@ class PromptGuardService:
             content_prefix = content[content_line_start:content_index]
             content_suffix = content[content_index + len(placeholder):content_line_end]
             if provider_prefix != content_prefix or provider_suffix != content_suffix:
+                return False
+
+            lines = content.splitlines()
+            content_line = content[:content_index].count("\n")
+            start = content_line
+            protected_lines = {
+                index for index, line in enumerate(lines)
+                if any(token in line for token in expected)
+            }
+            while start > 0 and start - 1 in protected_lines:
+                start -= 1
+            end = content_line
+            while end + 1 in protected_lines:
+                end += 1
+            anchor = ProtectedAnchor(
+                before=tuple(lines[max(0, start - 2):start]),
+                after=tuple(lines[end + 1:min(len(lines), end + 3)]),
+            )
+            if source.anchors.get(placeholder) != anchor:
                 return False
 
         return True
@@ -249,6 +319,13 @@ class PatchGuardService:
                     raise ValueError(f"Patch forbidden in excluded directory: {pf.path}")
 
             op = pf.operation.lower()
+            if op not in {"create", "modify", "delete"}:
+                raise ValueError(f"Unsupported patch operation: {pf.operation}")
+            exists = target.exists()
+            if op == "create" and exists:
+                raise ValueError(f"Create target already exists: {pf.path}")
+            if op in {"modify", "delete"} and not exists:
+                raise ValueError(f"{op.capitalize()} target does not exist: {pf.path}")
             if op == "delete":
                 if pf.content and pf.content.strip():
                     raise ValueError(f"content must be null/empty for delete: {pf.path}")
