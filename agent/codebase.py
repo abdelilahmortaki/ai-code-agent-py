@@ -1,13 +1,8 @@
 from __future__ import annotations
 from pathlib import Path
 
-from agent.config import ProjectConfig
+from agent.config import SUPPORTED_EXTENSIONS, ProjectConfig
 from agent.paths import resolve_within
-
-SUPPORTED_EXTENSIONS = {
-    ".java", ".xml", ".yml", ".yaml", ".properties", ".json", ".md", ".txt"
-}
-
 
 class CodebaseService:
     def __init__(self, max_file_chars: int = 12000):
