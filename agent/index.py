@@ -23,6 +23,9 @@ class EmbeddingsService:
 
     def __init__(self, bedrock_cfg: BedrockConfig) -> None:
         self.model_id = bedrock_cfg.embeddings_model_id
+        self.provider_name = "bedrock"
+        self.model_identity = self.model_id
+        self.dimensions = 1024
         self._client = boto3.client("bedrock-runtime", region_name=bedrock_cfg.region)
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -62,6 +65,13 @@ class SemanticIndexService:
         chunks = self._chunk_docs(docs, max_chars=1800)
         texts = [f"FILE: {c.path}\nCHUNK: {c.chunk_index}\n{c.text}" for c in chunks]
         vectors = self.embeddings.embed_texts(texts)
+        if len(vectors) != len(chunks):
+            raise ValueError("Embedding provider returned an incomplete result")
+        dimensions = len(vectors[0]) if vectors else self.embeddings.dimensions
+        if dimensions is None:
+            raise ValueError("Embedding provider did not report vector dimensions")
+        if any(len(vector) != dimensions for vector in vectors):
+            raise ValueError("Embedding provider returned inconsistent vector dimensions")
 
         indexed = [
             IndexedChunk(
@@ -72,7 +82,7 @@ class SemanticIndexService:
             )
             for i, c in enumerate(chunks)
         ]
-        self._persist(project, indexed)
+        self._persist(project, indexed, dimensions)
         return [f"{ic.path}#{ic.chunk_index}" for ic in indexed]
 
     def search(self, project: ProjectConfig, query: str, top_k: int) -> list[str]:
@@ -80,7 +90,7 @@ class SemanticIndexService:
         Returns the unique file paths of the top-K most relevant chunks.
         Callers should then read the *full file content* for each path.
         """
-        indexed = self._load(project)
+        metadata, indexed = self._load(project)
         if not indexed:
             return []
 
@@ -88,6 +98,8 @@ class SemanticIndexService:
         if not q_vecs:
             return []
         q = q_vecs[0]
+        if len(q) != metadata["dimensions"]:
+            raise ValueError("REBUILD_REQUIRED: embedding dimensions differ")
 
         ranked = sorted(indexed, key=lambda c: self._cosine(q, c.embedding), reverse=True)
 
@@ -133,20 +145,48 @@ class SemanticIndexService:
         norm_b = math.sqrt(sum(x * x for x in b))
         return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
 
-    def _persist(self, project: ProjectConfig, indexed: list[IndexedChunk]) -> None:
+    def _persist(self, project: ProjectConfig, indexed: list[IndexedChunk], dimensions: int) -> None:
         path = self._index_path(project)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            json.dumps([ic.model_dump() for ic in indexed], indent=2),
+            json.dumps(
+                {
+                    "embedding": {
+                        "provider": self.embeddings.provider_name,
+                        "deployment_or_model": self.embeddings.model_identity,
+                        "dimensions": dimensions,
+                    },
+                    "chunks": [ic.model_dump() for ic in indexed],
+                },
+                indent=2,
+            ),
             encoding="utf-8",
         )
 
-    def _load(self, project: ProjectConfig) -> list[IndexedChunk]:
+    def _load(self, project: ProjectConfig) -> tuple[dict, list[IndexedChunk]]:
         path = self._index_path(project)
         if not path.exists():
-            return []
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return [IndexedChunk(**item) for item in data]
+            return {"dimensions": 0}, []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("REBUILD_REQUIRED: index metadata missing") from exc
+        if not isinstance(data, dict) or not isinstance(data.get("embedding"), dict):
+            raise ValueError("REBUILD_REQUIRED: index metadata missing")
+        metadata = data["embedding"]
+        if (
+            metadata.get("provider") != self.embeddings.provider_name
+            or metadata.get("deployment_or_model") != self.embeddings.model_identity
+        ):
+            raise ValueError("REBUILD_REQUIRED: embedding provider or deployment differs")
+        dimensions = metadata.get("dimensions")
+        chunks = data.get("chunks")
+        if not isinstance(dimensions, int) or dimensions <= 0 or not isinstance(chunks, list):
+            raise ValueError("REBUILD_REQUIRED: index metadata invalid")
+        indexed = [IndexedChunk(**item) for item in chunks]
+        if any(len(chunk.embedding) != dimensions for chunk in indexed):
+            raise ValueError("REBUILD_REQUIRED: indexed vector dimensions differ")
+        return {"dimensions": dimensions}, indexed
 
     @staticmethod
     def _index_path(project: ProjectConfig) -> Path:
