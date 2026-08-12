@@ -1,3 +1,5 @@
+# Runtime provider is selected explicitly with AI_PROVIDER=bedrock|azure.
+# The default is bedrock; no automatic provider fallback exists.
 bedrock:
   region: "us-east-1"                              # override with AWS_REGION
   model_id: "qwen.qwen3-coder-30b-a3b-v1:0"       # override with BEDROCK_MODEL_ID

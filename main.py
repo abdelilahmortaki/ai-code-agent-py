@@ -9,12 +9,12 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agent.analysis import StaticAnalysisService
-from agent.bedrock_service import BedrockService
 from agent.codebase import CodebaseService
 from agent.config import Settings, ProjectConfig
+from agent.factory import create_provider_runtime
 from agent.git_service import GitDiffService
 from agent.guard import PatchGuardService, PromptGuardService
-from agent.index import EmbeddingsService, SemanticIndexService
+from agent.index import SemanticIndexService
 from agent.models import PatchResult, ProjectOverview, UserStory
 from agent.orchestrator import AgentOrchestrator
 from agent.paths import resolve_within
@@ -67,11 +67,10 @@ for _p in _load_registry():
         settings.agent.projects.append(_p)
 
 codebase        = CodebaseService(max_file_chars=settings.agent.max_file_chars)
-embedding_provider = EmbeddingsService(settings.bedrock)     # Amazon Titan via Bedrock
-semantic_index  = SemanticIndexService(codebase, embedding_provider)
 prompt_guard    = PromptGuardService()
 patch_guard     = PatchGuardService()
-generation_provider = BedrockService(settings.bedrock, prompt_guard)  # Qwen via Bedrock
+provider_runtime = create_provider_runtime(settings, prompt_guard)
+semantic_index  = SemanticIndexService(codebase, provider_runtime.embedding)
 patch_applier   = PatchApplierService(patch_guard)
 git_diff        = GitDiffService()
 static_analysis = StaticAnalysisService(codebase)
@@ -82,7 +81,7 @@ orchestrator = AgentOrchestrator(
     config=settings.agent,
     codebase=codebase,
     semantic_index=semantic_index,
-    generation_provider=generation_provider,
+    generation_provider=provider_runtime.generation,
     patch_applier=patch_applier,
     git_diff=git_diff,
     static_analysis=static_analysis,
@@ -97,7 +96,7 @@ _run_queues: dict[str, asyncio.Queue] = {}
 # API
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="CardPro Code Agent (Bedrock)", version="1.0.0")
+app = FastAPI(title="CardPro Code Agent", version="1.0.0")
 
 
 @app.get("/api/agent/projects", response_model=list[ProjectOverview])
