@@ -139,8 +139,13 @@ class _UploadRequest(BaseModel):
 
 @app.post("/api/agent/projects/upload")
 def upload_project(req: _UploadRequest):
+    if not req.files:
+        raise HTTPException(status_code=400, detail="Upload must contain at least one file")
     project_id = f"upload-{int(time.time())}"
     upload_root = Path(".agent/uploads") / project_id
+    destinations: list[tuple[_FileEntry, Path]] = []
+    seen_destinations: set[str] = set()
+    total_bytes = 0
 
     for f in req.files:
         normalized_path = f.path.replace("\\", "/")
@@ -156,11 +161,26 @@ def upload_project(req: _UploadRequest):
             dest = resolve_within(upload_root, rel)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=f"Invalid file path: {f.path}") from exc
+
+        if dest.suffix.lower() not in settings.agent.normalized_upload_allowed_extensions():
+            raise HTTPException(status_code=400, detail=f"Invalid file extension: {f.path}")
+
+        file_bytes = len(f.content.encode("utf-8"))
+        if file_bytes > settings.agent.upload_max_file_bytes:
+            raise HTTPException(status_code=413, detail=f"File is too large: {f.path}")
+        total_bytes += file_bytes
+        if total_bytes > settings.agent.upload_max_total_bytes:
+            raise HTTPException(status_code=413, detail="Upload is too large")
+
+        destination_key = dest.relative_to(upload_root.resolve()).as_posix().casefold()
+        if destination_key in seen_destinations:
+            raise HTTPException(status_code=400, detail=f"Duplicate file path: {f.path}")
+        seen_destinations.add(destination_key)
+        destinations.append((f, dest))
+
+    for f, dest in destinations:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            dest.write_text(f.content, encoding="utf-8")
-        except Exception:
-            pass
+        dest.write_text(f.content, encoding="utf-8")
 
     new_proj = ProjectConfig(
         id=project_id,
