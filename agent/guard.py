@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
+import difflib
 import posixpath
 import re
 from pathlib import Path
@@ -26,6 +27,19 @@ _PROTECTED_PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9_-])__PROTECTED_\d{4}__(?![A
 _PROTECTED_LIKE = re.compile(r"__PROTECTED_[A-Za-z0-9_-]+__")
 _PER_FILE_CONTEXT_LIMIT = 12_000
 _PROMPT_CONTEXT_LIMIT = 64_000
+_FORMATTING_NEGATION = re.compile(
+    r"\b(?:no|without)\s+(?:format(?:ting)?|whitespace)(?:\s+changes?)?\b"
+    r"|\bdo\s+not\s+(?:reformat|format|change|modify|fix|normalize|normalise|add|remove)\b"
+    r"|\bdon['’]?t\s+(?:reformat|format|change|modify|fix|normalize|normalise|add|remove)\b",
+    re.IGNORECASE,
+)
+_FORMATTING_POSITIVE = re.compile(
+    r"\b(?:reformat|format)\s+(?:this|the|a|all)?\s*(?:file|files?|code|source|document)\b"
+    r"|\bnormalize\s+whitespace\b"
+    r"|\b(?:fix\s*/\s*change|fix\s+or\s+change|fix|change|adjust|update)\s+(?:the\s+)?indentation\b"
+    r"|\b(?:add\s*/\s*remove|add\s+or\s+remove|add|remove)\s+blank\s+lines?\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +54,7 @@ class ProtectedFileContext:
     provider_content: str = field(repr=False)
     protected_values: dict[str, str] = field(repr=False)
     anchors: dict[str, ProtectedAnchor] = field(default_factory=dict, repr=False)
+    original_content: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True)
@@ -115,10 +130,11 @@ class PromptGuardService:
 
             prompt = candidate
             source_files[file_key] = ProtectedFileContext(
-                True,
-                protected,
-                mapping,
-                self._protected_anchors(protected, mapping),
+                complete=True,
+                provider_content=protected,
+                protected_values=mapping,
+                anchors=self._protected_anchors(protected, mapping),
+                original_content=content,
             )
 
         return ProtectedPromptContext(
@@ -166,6 +182,31 @@ class PromptGuardService:
                 content = content.replace(placeholder, original)
             patch_file.content = content
 
+        return plan
+
+    def validate_minimality(
+        self,
+        context: ProtectedPromptContext,
+        plan: PatchPlan,
+        story: UserStory,
+    ) -> PatchPlan:
+        """Reject unrelated whitespace changes after protected values are restored."""
+        if self._formatting_requested(story):
+            return plan
+
+        for patch_file in plan.files:
+            if patch_file.operation.lower() != "modify":
+                continue
+            source = context.source_files.get(self._file_key(patch_file.path))
+            if source is None:
+                raise ValueError("SOURCE_CONTEXT_MISSING")
+            if not source.complete:
+                raise ValueError("SOURCE_CONTEXT_TRUNCATED")
+            if self._has_unrelated_whitespace_change(
+                source.original_content,
+                patch_file.content or "",
+            ):
+                raise ValueError("UNRELATED_FORMATTING_CHANGED")
         return plan
 
     # ------------------------------------------------------------------ private
@@ -295,6 +336,56 @@ class PromptGuardService:
         if not s:
             return ""
         return s if len(s) <= max_chars else s[:max_chars] + "\n...[TRUNCATED]"
+
+    @staticmethod
+    def _formatting_requested(story: UserStory) -> bool:
+        text = "\n".join([story.title, story.description, *story.acceptanceCriteria])
+        return not _FORMATTING_NEGATION.search(text) and bool(_FORMATTING_POSITIVE.search(text))
+
+    @staticmethod
+    def _has_unrelated_whitespace_change(original: str, proposed: str) -> bool:
+        if original == proposed:
+            return False
+
+        original_lines = original.splitlines()
+        proposed_lines = proposed.splitlines()
+        if original.endswith(("\n", "\r")) != proposed.endswith(("\n", "\r")):
+            return True
+        original_normalized = [re.sub(r"\s+", "", line) for line in original_lines]
+        proposed_normalized = [re.sub(r"\s+", "", line) for line in proposed_lines]
+        matcher = difflib.SequenceMatcher(
+            a=original_normalized,
+            b=proposed_normalized,
+            autojunk=False,
+        )
+
+        for tag, original_start, original_end, proposed_start, proposed_end in matcher.get_opcodes():
+            if tag == "equal":
+                if any(
+                    original_lines[index] != proposed_lines[proposed_start + index - original_start]
+                    for index in range(original_start, original_end)
+                ):
+                    return True
+                continue
+
+            if any(not value for value in original_normalized[original_start:original_end]):
+                return True
+            if any(not value for value in proposed_normalized[proposed_start:proposed_end]):
+                return True
+            for offset in range(min(original_end - original_start, proposed_end - proposed_start)):
+                original_line = original_lines[original_start + offset]
+                proposed_line = proposed_lines[proposed_start + offset]
+                if PromptGuardService._edge_whitespace(original_line) != PromptGuardService._edge_whitespace(proposed_line):
+                    return True
+
+        return False
+
+    @staticmethod
+    def _edge_whitespace(line: str) -> tuple[str, str]:
+        return (
+            line[: len(line) - len(line.lstrip())],
+            line[len(line.rstrip()):],
+        )
 
 
 class PatchGuardService:
