@@ -36,6 +36,9 @@ Rules:
 - For \"modify\" or \"create\", \"content\" must be the FULL file content (not a diff).
 - For \"delete\", \"content\" must be null.
 - Only touch files that are strictly necessary.
+- For modify operations, preserve all unrelated content exactly, including blank lines, indentation, comments, and ordering.
+- Do not reformat, normalize documentation, remove apparently redundant whitespace, or clean up formatting.
+- Change only what the story explicitly requires.
 """
 
 
@@ -128,9 +131,9 @@ class BedrockService:
         static_analysis: str,
         log_callback: Callable[[str], None] = _noop,
     ) -> PatchPlan:
-        prompt = self.prompt_guard.build_prompt(project, story, relevant_files, static_analysis)
-        prompt += "\n\n" + _SCHEMA_HINT
-        return self._call(story.id, prompt, log_callback)
+        context = self.prompt_guard.build_prompt(project, story, relevant_files, static_analysis)
+        plan = self._call(story.id, context.prompt + "\n\n" + _SCHEMA_HINT, log_callback)
+        return self.prompt_guard.restore_plan(context, plan)
 
     def generate_fix_plan(self, ctx: TestFailureContext, log_callback: Callable[[str], None] = _noop) -> PatchPlan:
         prompt = (
