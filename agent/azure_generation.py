@@ -108,8 +108,11 @@ class AzureOpenAIGenerationProvider:
         relevant_files: list[tuple[str, str]],
         static_analysis: str,
         log_callback: Callable[[str], None] = _noop,
+        validation_feedback: str = "",
     ) -> PatchPlan:
-        context = self._prompt_guard.build_prompt(project, story, relevant_files, static_analysis)
+        context = self._prompt_guard.build_prompt(
+            project, story, relevant_files, static_analysis, validation_feedback
+        )
         plan = self._generate(story.id, context.prompt, log_callback)
         plan = self._prompt_guard.restore_plan(context, plan)
         return self._prompt_guard.validate_minimality(context, plan, story)

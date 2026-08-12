@@ -9,11 +9,22 @@ from agent.codebase import CodebaseService
 from agent.git_service import GitDiffService
 from agent.guard import PromptGuardService
 from agent.index import SemanticIndexService
-from agent.models import PatchResult, ProjectOverview, TestFailureContext, UserStory
+from agent.models import PatchPlan, PatchResult, ProjectOverview, TestFailureContext, UserStory
 from agent.patch import PatchApplierService
 from agent.providers import GenerationProvider
 from agent.runner import TestRunner
 from agent.stories import StoryFileReader
+
+
+_MAX_GENERATION_ATTEMPTS = 2
+_PRESERVATION_FEEDBACK = (
+    "Previous proposal was rejected because it changed unrelated formatting. "
+    "Regenerate from the authoritative source. "
+    "Preserve all unrelated content exactly. "
+    "Make only the requested semantic change. "
+    "Do not change blank lines, indentation, trailing whitespace, EOF newline, "
+    "comments, or ordering unless explicitly requested."
+)
 
 
 def _noop(msg: str) -> None:
@@ -123,7 +134,39 @@ class AgentOrchestrator:
                 output.extend(chunk)
         return "".join(output)
 
+    def _generate_patch_plan(
+        self,
+        project,
+        story: UserStory,
+        relevant_files: list[tuple[str, str]],
+        static_analysis: str,
+        log: Callable[[str], None],
+    ) -> tuple[PatchPlan, int]:
+        feedback = ""
+        for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
+            log(f"Generation attempt {attempt}/{_MAX_GENERATION_ATTEMPTS}")
+            try:
+                plan = self.generation_provider.generate_patch_plan(
+                    project,
+                    story,
+                    relevant_files,
+                    static_analysis,
+                    log,
+                    validation_feedback=feedback,
+                )
+            except ValueError as exc:
+                if str(exc) != "UNRELATED_FORMATTING_CHANGED" or attempt == _MAX_GENERATION_ATTEMPTS:
+                    raise
+                log("Proposal rejected: unrelated formatting changed")
+                log("Regenerating with preservation feedback")
+                feedback = _PRESERVATION_FEEDBACK
+                continue
+            log("Proposal validated")
+            return plan, attempt
+        raise RuntimeError("Generation attempts exhausted")
+
     def _run(self, project, story: UserStory, log: Callable[[str], None] = _noop) -> PatchResult:
+        self._pending_plans.pop(project.id, None)
         log("Checking semantic index…")
         if not self.semantic_index.exists(project):
             log("Index missing — building from codebase…")
@@ -149,8 +192,7 @@ class AgentOrchestrator:
         total_chars = sum(len(c) for _, c in relevant_files)
         log(f"Context: {len(relevant_files)} file(s) loaded ({total_chars:,} chars total)")
 
-        log("Generating patch plan…")
-        plan = self.generation_provider.generate_patch_plan(
+        plan, attempts_used = self._generate_patch_plan(
             project, story, relevant_files, pre_analysis.report, log
         )
         ops = ", ".join(sorted({f.operation for f in plan.files})) or "none"
@@ -171,6 +213,6 @@ class AgentOrchestrator:
             git_diff=preview_diff,
             analysis=pre_analysis,
             test_run=None,
-            attempts_used=1,
+            attempts_used=attempts_used,
             pending_review=True,
         )

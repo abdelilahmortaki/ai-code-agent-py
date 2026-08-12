@@ -98,6 +98,22 @@ _run_queues: dict[str, asyncio.Queue] = {}
 
 app = FastAPI(title="CardPro Code Agent", version="1.0.0")
 
+_GENERATION_VALIDATION_ERRORS = {
+    "UNRELATED_FORMATTING_CHANGED",
+    "PROTECTED_CONTENT_CHANGED",
+    "SOURCE_CONTEXT_MISSING",
+    "SOURCE_CONTEXT_TRUNCATED",
+}
+
+
+def _generation_http_exception(exc: ValueError) -> HTTPException:
+    detail = str(exc)
+    if detail in _GENERATION_VALIDATION_ERRORS:
+        return HTTPException(status_code=422, detail=detail)
+    if detail.startswith(("Project not found:", "Story not found:")):
+        return HTTPException(status_code=404, detail=detail)
+    return HTTPException(status_code=500, detail="Generation failed")
+
 
 @app.get("/api/agent/projects", response_model=list[ProjectOverview])
 def list_projects():
@@ -118,9 +134,9 @@ def generate_patch(project_id: str, story_id: str):
     try:
         return orchestrator.process_story(project_id, story_id)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise _generation_http_exception(exc) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Generation failed") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -266,9 +282,9 @@ async def generate_adhoc(
         )
         return result
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise _generation_http_exception(exc) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Generation failed") from exc
     finally:
         if q is not None:
             loop.call_soon_threadsafe(q.put_nowait, None)  # sentinel → close SSE stream

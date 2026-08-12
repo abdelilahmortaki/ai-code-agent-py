@@ -20,6 +20,7 @@ class GenerationProvider(Protocol):
         relevant_files: list[tuple[str, str]],
         static_analysis: str,
         log_callback: Callable[[str], None],
+        validation_feedback: str = "",
     ) -> PatchPlan: ...
 
     def generate_fix_plan(

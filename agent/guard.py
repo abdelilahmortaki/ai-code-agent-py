@@ -85,6 +85,7 @@ class PromptGuardService:
         story: UserStory,
         relevant_files: list[tuple[str, str]],  # (relative_path, full_content)
         static_analysis: str,
+        validation_feedback: str = "",
     ) -> ProtectedPromptContext:
         source_files: dict[str, ProtectedFileContext] = {}
         next_placeholder = 1
@@ -135,6 +136,11 @@ class PromptGuardService:
                 protected_values=mapping,
                 anchors=self._protected_anchors(protected, mapping),
                 original_content=content,
+            )
+
+        if validation_feedback:
+            prompt += "\n\nVALIDATION_FEEDBACK:\n" + self._limit(
+                self._redact(validation_feedback), 2000
             )
 
         return ProtectedPromptContext(

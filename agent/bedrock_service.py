@@ -130,8 +130,11 @@ class BedrockService:
         relevant_files: list[tuple[str, str]],  # (path, full_content)
         static_analysis: str,
         log_callback: Callable[[str], None] = _noop,
+        validation_feedback: str = "",
     ) -> PatchPlan:
-        context = self.prompt_guard.build_prompt(project, story, relevant_files, static_analysis)
+        context = self.prompt_guard.build_prompt(
+            project, story, relevant_files, static_analysis, validation_feedback
+        )
         plan = self._call(story.id, context.prompt + "\n\n" + _SCHEMA_HINT, log_callback)
         plan = self.prompt_guard.restore_plan(context, plan)
         return self.prompt_guard.validate_minimality(context, plan, story)

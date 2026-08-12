@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 import json
+from typing import Callable
 
 import httpx
 
@@ -56,8 +58,12 @@ class OpenAiService:
         story: UserStory,
         relevant_files: list[tuple[str, str]],  # (path, full_content)
         static_analysis: str,
+        log_callback: Callable[[str], None] = lambda _msg: None,
+        validation_feedback: str = "",
     ) -> PatchPlan:
-        context = self.prompt_guard.build_prompt(project, story, relevant_files, static_analysis)
+        context = self.prompt_guard.build_prompt(
+            project, story, relevant_files, static_analysis, validation_feedback
+        )
         plan = self._call_structured(context.prompt, "spring_boot_patch_plan")
         plan = self.prompt_guard.restore_plan(context, plan)
         return self.prompt_guard.validate_minimality(context, plan, story)
