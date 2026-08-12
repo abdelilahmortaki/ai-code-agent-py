@@ -10,8 +10,8 @@ from agent.git_service import GitDiffService
 from agent.guard import PromptGuardService
 from agent.index import SemanticIndexService
 from agent.models import PatchResult, ProjectOverview, TestFailureContext, UserStory
-from agent.openai_service import OpenAiService
 from agent.patch import PatchApplierService
+from agent.providers import GenerationProvider
 from agent.runner import TestRunner
 from agent.stories import StoryFileReader
 
@@ -27,7 +27,7 @@ class AgentOrchestrator:
         config: AgentConfig,
         codebase: CodebaseService,
         semantic_index: SemanticIndexService,
-        openai_service: OpenAiService,
+        generation_provider: GenerationProvider,
         patch_applier: PatchApplierService,
         git_diff: GitDiffService,
         static_analysis: StaticAnalysisService,
@@ -37,7 +37,7 @@ class AgentOrchestrator:
         self.config = config
         self.codebase = codebase
         self.semantic_index = semantic_index
-        self.openai_service = openai_service
+        self.generation_provider = generation_provider
         self.patch_applier = patch_applier
         self.git_diff = git_diff
         self.static_analysis = static_analysis
@@ -149,8 +149,8 @@ class AgentOrchestrator:
         total_chars = sum(len(c) for _, c in relevant_files)
         log(f"Context: {len(relevant_files)} file(s) loaded ({total_chars:,} chars total)")
 
-        log("Calling AWS Bedrock — generating patch plan…")
-        plan = self.openai_service.generate_patch_plan(
+        log("Generating patch plan…")
+        plan = self.generation_provider.generate_patch_plan(
             project, story, relevant_files, pre_analysis.report, log
         )
         ops = ", ".join(sorted({f.operation for f in plan.files})) or "none"

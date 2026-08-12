@@ -8,6 +8,7 @@ import boto3
 from agent.config import BedrockConfig, ProjectConfig
 from agent.codebase import CodebaseService
 from agent.models import IndexedChunk, RepoChunk
+from agent.providers import EmbeddingProvider
 
 # Amazon Titan Embed Text v2 truncation limit (safe character ceiling)
 _TITAN_MAX_CHARS = 8000
@@ -49,7 +50,7 @@ class SemanticIndexService:
     can pass full file contents to OpenAI instead of partial chunks.
     """
 
-    def __init__(self, codebase: CodebaseService, embeddings: EmbeddingsService) -> None:
+    def __init__(self, codebase: CodebaseService, embeddings: EmbeddingProvider) -> None:
         self.codebase = codebase
         self.embeddings = embeddings
 
