@@ -113,9 +113,18 @@ class LexicalSearchService:
 # --------------------------------------------------------------------------- CLI
 
 
-def _find_project(store: PgStore, repo_root: str, name: str) -> dict | None:
-    """Resolve the project row for the CLI: by external id (repo root path),
-    falling back to a name lookup when --name is given."""
+def _find_project(store: PgStore, repo_root: str, name: str, project_id: str = "") -> dict | None:
+    """Resolve the project row for the CLI.
+
+    ``--project-id`` (the runtime project id, e.g. upload-123) is the
+    authoritative external_id lookup when supplied. Otherwise fall back to
+    the repo-root external id, then a name lookup when --name is given
+    (backward compatibility for old CLI-created projects).
+    """
+    if project_id:
+        project = store.find_project_by_external_id(project_id)
+        if project is not None:
+            return project
     project = store.find_project_by_external_id(repo_root)
     if project is None and name:
         project = store.find_project_by_name(name)
@@ -129,9 +138,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--repo-root",
-        required=True,
+        default="",
         help="Absolute path of the indexed project (its resolved path is the "
-        "project's external id)",
+        "project's external id); not needed when --project-id is used",
+    )
+    parser.add_argument(
+        "--project-id",
+        default="",
+        help="Runtime project id (external_id, e.g. upload-123); takes "
+        "precedence over the repo-root lookup",
     )
     parser.add_argument(
         "--name",
@@ -154,10 +169,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--url",
         default=None,
-        help="Database URL (overrides DATABASE_URL)"
-        "database.url)",
+        help="Database URL (overrides DATABASE_URL)",
     )
     args = parser.parse_args(argv)
+
+    if not args.project_id and not args.repo_root:
+        parser.error("either --project-id or --repo-root is required")
 
     dsn = _database_url(args.url)
     if not dsn:
@@ -171,10 +188,14 @@ def main(argv: list[str] | None = None) -> int:
         from agent.db.store import PgStore
 
         store = PgStore(dsn)
-        external_id = str(Path(args.repo_root).resolve())
-        project = _find_project(store, external_id, args.name)
+        external_id = str(Path(args.repo_root).resolve()) if args.repo_root else ""
+        project = _find_project(store, external_id, args.name, args.project_id)
         if project is None:
-            print(f"Project not found for repo root: {external_id}", file=sys.stderr)
+            print(
+                f"Project not found (project-id: {args.project_id or '-'}, "
+                f"repo root: {external_id or '-'})",
+                file=sys.stderr,
+            )
             return 1
         filters = {"symbol_type": args.symbol_type} if args.symbol_type else None
         result = LexicalSearchService(store).search_latest(
