@@ -206,23 +206,35 @@ class SymbolEmbeddingIndexer:
         failed_files: list[str] = []
         fallback: list[str] = []
 
-        if unchanged and previous_version is not None:
-            copy_result = self.store.copy_unchanged_file_symbols(
-                new_version_id=version["id"],
-                old_version_id=previous_version["id"],
-                paths=unchanged,
-                provider=self.embedding_provider.provider_name,
-                deployment_or_model=self.embedding_provider.model_identity,
-                dimensions=self.embedding_provider.dimensions,
-            )
-            symbols_reused += copy_result["symbols_copied"]
-            embeddings_reused += copy_result["embeddings_copied"]
-            fallback = [
-                rel
-                for rel in unchanged
-                if copy_result["symbols_by_path"].get(rel, 0) == 0
-            ]
-            unchanged = [rel for rel in unchanged if rel not in fallback]
+        known_dimensions = self.embedding_provider.dimensions
+        if known_dimensions is None:
+            # Cold provider: the current output dimension is unknown until the
+            # first real embedding call. Never reuse embeddings we cannot
+            # prove dimension-compatible; re-embed every unchanged file.
+            if unchanged and previous_version is not None:
+                fallback = list(unchanged)
+                unchanged = []
+            else:
+                fallback = []
+        else:
+            fallback = []
+            if unchanged and previous_version is not None:
+                copy_result = self.store.copy_unchanged_file_symbols(
+                    new_version_id=version["id"],
+                    old_version_id=previous_version["id"],
+                    paths=unchanged,
+                    provider=self.embedding_provider.provider_name,
+                    deployment_or_model=self.embedding_provider.model_identity,
+                    dimensions=known_dimensions,
+                )
+                symbols_reused += copy_result["symbols_copied"]
+                embeddings_reused += copy_result["embeddings_copied"]
+                fallback = [
+                    rel
+                    for rel in unchanged
+                    if copy_result["symbols_by_path"].get(rel, 0) == 0
+                ]
+                unchanged = [rel for rel in unchanged if rel not in fallback]
 
         for rel in sorted(changed + added + fallback):
             try:

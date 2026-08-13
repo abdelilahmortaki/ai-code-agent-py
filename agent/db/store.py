@@ -238,15 +238,16 @@ class PgStore:
         following hold:
 
         - its path exists in both versions AND the stored file_hash matches;
-        - every old symbol of the file has an embedding row (complete set);
-        - every old embedding of the file carries the same provider,
-          deployment_or_model and (when known) dimensions as the current run.
+        - EVERY old symbol of the file has an embedding row (complete set);
+        - EVERY old embedding of the file carries the same provider,
+          deployment_or_model and dimensions as the current run.
 
-        If any provenance requirement fails, the file is not copied and the
-        caller re-parses/re-embeds it. Symbol rows are recreated with fresh
-        ids; embeddings are copied with an exact-content symbol remap
-        (module, package_name, owner, symbol_type, name, qualified_name,
-        signature, start_line, end_line, source).
+        The provenance check is FILE-LEVEL: if ANY symbol of the file fails
+        any requirement, ZERO symbols of that file are copied (the caller
+        re-parses/re-embeds the whole file). No partial file copies are
+        possible. ``dimensions`` must equal the current provider output
+        dimension; passing None matches nothing, so unknown dimensions also
+        fail safe (no reuse).
 
         Returns {"paths", "symbols_copied", "embeddings_copied",
         "symbols_by_path"} where symbols_by_path maps each copied path to the
@@ -269,16 +270,14 @@ class PgStore:
             "AND new_files.file_hash = old_files.file_hash "
             "AND new_files.path = ANY(%s) "
             "WHERE old_s.project_version_id = %s "
-            "AND old_s.id IN ("
-            "  SELECT se3.symbol_id FROM symbol_embeddings se3 "
-            "  WHERE se3.provider = %s AND se3.deployment_or_model = %s "
-            "  AND (%s::int IS NULL OR se3.dimensions = %s)"
-            ") "
             "AND NOT EXISTS ("
-            "  SELECT 1 FROM code_symbols missing "
-            "  WHERE missing.project_version_id = %s AND missing.file_id = old_files.id "
+            "  SELECT 1 FROM code_symbols bad "
+            "  WHERE bad.project_version_id = %s AND bad.file_id = old_files.id "
             "  AND NOT EXISTS ("
-            "    SELECT 1 FROM symbol_embeddings e WHERE e.symbol_id = missing.id"
+            "    SELECT 1 FROM symbol_embeddings e "
+            "    WHERE e.symbol_id = bad.id "
+            "      AND e.provider = %s AND e.deployment_or_model = %s "
+            "      AND e.dimensions = %s"
             "  )"
             ") "
             "RETURNING id AS new_symbol_id, file_id AS new_file_id"
@@ -316,11 +315,10 @@ class PgStore:
             new_version_id,
             list(paths),
             old_version_id,
+            old_version_id,
             provider,
             deployment_or_model,
             dimensions,
-            dimensions,
-            old_version_id,
         )
         embedding_params = (
             new_version_id,
