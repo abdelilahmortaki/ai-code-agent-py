@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable, Protocol, TypedDict
 
 from agent.config import ProjectConfig
-from agent.models import PatchPlan, TestFailureContext, UserStory
+from agent.models import PatchProposalPlan, TestFailureContext, UserStory
 
 
 class NormalizedUsage(TypedDict, total=False):
@@ -21,13 +21,13 @@ class GenerationProvider(Protocol):
         static_analysis: str,
         log_callback: Callable[[str], None],
         validation_feedback: str = "",
-    ) -> PatchPlan: ...
+    ) -> PatchProposalPlan: ...
 
     def generate_fix_plan(
         self,
         ctx: TestFailureContext,
         log_callback: Callable[[str], None],
-    ) -> PatchPlan: ...
+    ) -> PatchProposalPlan: ...
 
     @property
     def provider_name(self) -> str: ...

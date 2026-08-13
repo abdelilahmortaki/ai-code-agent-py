@@ -8,43 +8,14 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, 
 
 from agent.config import ProjectConfig
 from agent.guard import PromptGuardService
-from agent.models import PatchFile, PatchPlan, TestFailureContext, UserStory
+from agent.models import ProposalFile, PatchProposalPlan, TestFailureContext, UserStory
 from agent.providers import NormalizedUsage
+from agent.patch_schema import PATCH_PLAN_SCHEMA, PATCH_SCHEMA_HINT
 
 
-_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "storyId": {"type": "string"},
-        "summary": {"type": "string"},
-        "files": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "path": {"type": "string"},
-                    "operation": {"type": "string", "enum": ["create", "modify", "delete"]},
-                    "content": {"anyOf": [{"type": "string"}, {"type": "null"}]},
-                },
-                "required": ["path", "operation", "content"],
-            },
-        },
-        "tests": {"type": "array", "items": {"type": "string"}},
-        "notes": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["storyId", "summary", "files", "tests", "notes"],
-}
+_SCHEMA = PATCH_PLAN_SCHEMA
 
-_SCHEMA_HINT = """
-Return only the JSON object required by the response schema. For create and modify,
-content must be the complete file content. For delete, content must be null.
-Only touch files strictly necessary for the story.
-For modify, preserve all unrelated content exactly, including blank lines, indentation,
-comments, and ordering. Do not reformat, normalize documentation, remove apparently
-redundant whitespace, or clean up formatting. Change only what the story explicitly requires.
-"""
+_SCHEMA_HINT = PATCH_SCHEMA_HINT
 
 
 def _noop(msg: str) -> None:
@@ -67,7 +38,7 @@ def _extract_json(text: str) -> dict:
             continue
         if isinstance(data, dict):
             return data
-    raise ValueError("Azure OpenAI returned malformed PatchPlan JSON")
+    raise ValueError("Azure OpenAI returned malformed PatchProposalPlan JSON")
 
 
 class AzureOpenAIGenerationProvider:
@@ -109,19 +80,19 @@ class AzureOpenAIGenerationProvider:
         static_analysis: str,
         log_callback: Callable[[str], None] = _noop,
         validation_feedback: str = "",
-    ) -> PatchPlan:
+    ) -> PatchProposalPlan:
         context = self._prompt_guard.build_prompt(
             project, story, relevant_files, static_analysis, validation_feedback
         )
         plan = self._generate(story.id, context.prompt, log_callback)
         plan = self._prompt_guard.restore_plan(context, plan)
-        return self._prompt_guard.validate_minimality(context, plan, story)
+        return plan
 
     def generate_fix_plan(
         self,
         ctx: TestFailureContext,
         log_callback: Callable[[str], None] = _noop,
-    ) -> PatchPlan:
+    ) -> PatchProposalPlan:
         prompt = (
             "A previous patch failed.\n\n"
             f"storyId: {ctx.story_id}\n"
@@ -151,7 +122,7 @@ class AzureOpenAIGenerationProvider:
         story_id: str,
         prompt: str,
         log_callback: Callable[[str], None],
-    ) -> PatchPlan:
+    ) -> PatchProposalPlan:
         log_callback("Connecting to Azure OpenAI…")
         raw_text = ""
         response = None
@@ -218,13 +189,13 @@ class AzureOpenAIGenerationProvider:
         if not raw_text:
             raw_text = getattr(response, "output_text", "") or ""
         if not raw_text:
-            raise RuntimeError("Azure OpenAI returned no usable PatchPlan")
+            raise RuntimeError("Azure OpenAI returned no usable PatchProposalPlan")
 
         log_callback(f"Generation complete — {len(raw_text):,} chars received, parsing JSON…")
         data = _extract_json(raw_text)
         try:
-            files = [PatchFile(**item) for item in data.get("files", [])]
-            plan = PatchPlan(
+            files = [ProposalFile(**item) for item in data.get("files", [])]
+            plan = PatchProposalPlan(
                 storyId=data["storyId"],
                 summary=data["summary"],
                 files=files,
@@ -232,6 +203,6 @@ class AzureOpenAIGenerationProvider:
                 notes=data.get("notes", []),
             )
         except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError("Azure OpenAI response did not match PatchPlan schema") from exc
+            raise ValueError("Azure OpenAI response did not match PatchProposalPlan schema") from exc
         log_callback(f"Patch plan parsed: {len(plan.files)} file(s)")
         return plan

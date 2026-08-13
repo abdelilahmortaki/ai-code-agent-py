@@ -9,7 +9,9 @@ from agent.codebase import CodebaseService
 from agent.git_service import GitDiffService
 from agent.guard import PromptGuardService
 from agent.index import SemanticIndexService
-from agent.models import PatchPlan, PatchResult, ProjectOverview, TestFailureContext, UserStory
+from agent.models import PatchPlan, PatchProposalPlan, PatchResult, ProjectOverview, TestFailureContext, UserStory
+from agent.materializer import PatchMaterializer
+from agent.guard import PromptGuardService
 from agent.patch import PatchApplierService
 from agent.providers import GenerationProvider
 from agent.runner import TestRunner
@@ -44,6 +46,7 @@ class AgentOrchestrator:
         static_analysis: StaticAnalysisService,
         test_runner: TestRunner,
         story_reader: StoryFileReader,
+        prompt_guard: PromptGuardService | None = None,
     ) -> None:
         self.config = config
         self.codebase = codebase
@@ -54,8 +57,10 @@ class AgentOrchestrator:
         self.static_analysis = static_analysis
         self.test_runner = test_runner
         self.story_reader = story_reader
+        self.materializer = PatchMaterializer()
+        self.prompt_guard = prompt_guard or PromptGuardService()
         # Pending plans awaiting user accept/reject — keyed by project_id
-        self._pending_plans: dict[str, object] = {}
+        self._pending_plans: dict[str, tuple[PatchPlan, str]] = {}
 
     # ------------------------------------------------------------------ public
 
@@ -86,7 +91,7 @@ class AgentOrchestrator:
             raise ValueError(f"No pending plan for project '{project_id}'")
         plan, preview_diff = entry
         project = self.config.project_by_id(project_id)
-        self.patch_applier.apply(project, plan.files)
+        self.patch_applier.apply(project, plan)
         # Return the pre-computed diff — no git required
         return preview_diff
 
@@ -115,12 +120,9 @@ class AgentOrchestrator:
         """Compute a unified diff between current and proposed file contents
         without touching the filesystem."""
         output: list[str] = []
-        for pf in plan_files:
+        for pf in plan_files.files:
             current = self.codebase.read_file(project, pf.path) or ""
-            if pf.operation == "delete":
-                new_content = ""
-            else:
-                new_content = pf.content or ""
+            new_content = pf.content or ""
             old_lines = current.splitlines(keepends=True)
             new_lines = new_content.splitlines(keepends=True)
             diff = difflib.unified_diff(
@@ -146,7 +148,7 @@ class AgentOrchestrator:
         for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
             log(f"Generation attempt {attempt}/{_MAX_GENERATION_ATTEMPTS}")
             try:
-                plan = self.generation_provider.generate_patch_plan(
+                proposal = self.generation_provider.generate_patch_plan(
                     project,
                     story,
                     relevant_files,
@@ -154,12 +156,14 @@ class AgentOrchestrator:
                     log,
                     validation_feedback=feedback,
                 )
+                plan = self.materializer.materialize(project, proposal)
+                self.prompt_guard.validate_materialized_minimality(project, plan, story)
             except ValueError as exc:
-                if str(exc) != "UNRELATED_FORMATTING_CHANGED" or attempt == _MAX_GENERATION_ATTEMPTS:
+                if str(exc) not in {"UNRELATED_FORMATTING_CHANGED", "EDIT_ANCHOR_NOT_FOUND", "EDIT_ANCHOR_AMBIGUOUS"} or attempt == _MAX_GENERATION_ATTEMPTS:
                     raise
-                log("Proposal rejected: unrelated formatting changed")
+                log(f"Proposal rejected: {exc}")
                 log("Regenerating with preservation feedback")
-                feedback = _PRESERVATION_FEEDBACK
+                feedback = _PRESERVATION_FEEDBACK + f"\nPrevious validation error: {exc}"
                 continue
             log("Proposal validated")
             return plan, attempt
@@ -199,7 +203,7 @@ class AgentOrchestrator:
         log(f"Patch plan: {len(plan.files)} file(s) [{ops}] — {plan.summary}")
 
         log("Computing diff preview…")
-        preview_diff = self._preview_diff(project, plan.files)
+        preview_diff = self._preview_diff(project, plan)
         log(f"Diff ready — {preview_diff.count(chr(10))} lines changed")
 
         # Store plan + pre-computed diff for accept/reject — do NOT write files yet

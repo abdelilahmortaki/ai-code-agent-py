@@ -5,7 +5,7 @@ from typing import Callable
 
 from agent.config import BedrockConfig, ProjectConfig, Settings
 from agent.guard import PromptGuardService
-from agent.models import PatchPlan, TestFailureContext, UserStory
+from agent.models import PatchProposalPlan, TestFailureContext, UserStory
 from agent.providers import EmbeddingProvider, GenerationProvider
 
 
@@ -36,7 +36,7 @@ class BedrockGenerationProvider:
         static_analysis: str,
         log_callback: Callable[[str], None] = _noop,
         validation_feedback: str = "",
-    ) -> PatchPlan:
+    ) -> PatchProposalPlan:
         return self._service.generate_patch_plan(
             project,
             story,
@@ -50,7 +50,7 @@ class BedrockGenerationProvider:
         self,
         ctx: TestFailureContext,
         log_callback: Callable[[str], None] = _noop,
-    ) -> PatchPlan:
+    ) -> PatchProposalPlan:
         return self._service.generate_fix_plan(ctx, log_callback)
 
 

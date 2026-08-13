@@ -87,6 +87,7 @@ orchestrator = AgentOrchestrator(
     static_analysis=static_analysis,
     test_runner=test_runner,
     story_reader=story_reader,
+    prompt_guard=prompt_guard,
 )
 
 # Active SSE log queues — keyed by client-generated run_id (UUID)
@@ -103,6 +104,9 @@ _GENERATION_VALIDATION_ERRORS = {
     "PROTECTED_CONTENT_CHANGED",
     "SOURCE_CONTEXT_MISSING",
     "SOURCE_CONTEXT_TRUNCATED",
+    "EDIT_ANCHOR_NOT_FOUND",
+    "EDIT_ANCHOR_AMBIGUOUS",
+    "EDIT_ANCHOR_OVERLAP",
 }
 
 

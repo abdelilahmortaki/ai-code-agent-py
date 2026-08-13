@@ -8,38 +8,15 @@ import boto3
 
 from agent.config import BedrockConfig, ProjectConfig
 from agent.guard import PromptGuardService
-from agent.models import PatchFile, PatchPlan, TestFailureContext, UserStory
+from agent.models import ProposalFile, PatchProposalPlan, TestFailureContext, UserStory
+from agent.patch_schema import PATCH_SCHEMA_HINT
 
 _log = logging.getLogger(__name__)
 
 def _noop(msg: str) -> None:
     pass
 
-# Inline JSON schema description injected into every prompt so the model
-# knows exactly what structure to return (Bedrock has no native schema mode).
-_SCHEMA_HINT = """
-Return ONLY a valid JSON object — no prose, no markdown fences — with this exact structure:
-{
-  "storyId": "<story id string>",
-  "summary": "<one-sentence technical summary>",
-  "files": [
-    {
-      "path": "<repo-relative path, e.g. src/main/java/com/example/demo/MyClass.java>",
-      "operation": "<create | modify | delete>",
-      "content": "<complete new file content as a single string, or null for delete>"
-    }
-  ],
-  "tests": ["<test description 1>", "..."],
-  "notes": ["<note 1>", "..."]
-}
-Rules:
-- For \"modify\" or \"create\", \"content\" must be the FULL file content (not a diff).
-- For \"delete\", \"content\" must be null.
-- Only touch files that are strictly necessary.
-- For modify operations, preserve all unrelated content exactly, including blank lines, indentation, comments, and ordering.
-- Do not reformat, normalize documentation, remove apparently redundant whitespace, or clean up formatting.
-- Change only what the story explicitly requires.
-"""
+_SCHEMA_HINT = PATCH_SCHEMA_HINT
 
 
 def _repair_json(text: str) -> str:
@@ -131,15 +108,15 @@ class BedrockService:
         static_analysis: str,
         log_callback: Callable[[str], None] = _noop,
         validation_feedback: str = "",
-    ) -> PatchPlan:
+    ) -> PatchProposalPlan:
         context = self.prompt_guard.build_prompt(
             project, story, relevant_files, static_analysis, validation_feedback
         )
         plan = self._call(story.id, context.prompt + "\n\n" + _SCHEMA_HINT, log_callback)
         plan = self.prompt_guard.restore_plan(context, plan)
-        return self.prompt_guard.validate_minimality(context, plan, story)
+        return plan
 
-    def generate_fix_plan(self, ctx: TestFailureContext, log_callback: Callable[[str], None] = _noop) -> PatchPlan:
+    def generate_fix_plan(self, ctx: TestFailureContext, log_callback: Callable[[str], None] = _noop) -> PatchProposalPlan:
         prompt = (
             "A previous patch failed.\n\n"
             f"storyId: {ctx.story_id}\n"
@@ -155,7 +132,7 @@ class BedrockService:
 
     # ------------------------------------------------------------------ private
 
-    def _call(self, story_id: str, prompt: str, log_callback: Callable[[str], None] = _noop) -> PatchPlan:
+    def _call(self, story_id: str, prompt: str, log_callback: Callable[[str], None] = _noop) -> PatchProposalPlan:
         log_callback("Connecting to AWS Bedrock…")
         response = self._client.converse_stream(
             modelId=self.cfg.model_id,
@@ -200,9 +177,9 @@ class BedrockService:
                 continue
             if f.get("operation") != "delete" and not f.get("content"):
                 continue
-            valid_files.append(PatchFile(**f))
+            valid_files.append(ProposalFile(**f))
         log_callback(f"Patch plan parsed: {len(valid_files)} file(s)")
-        return PatchPlan(
+        return PatchProposalPlan(
             storyId=data.get("storyId", story_id),
             summary=data.get("summary", ""),
             files=valid_files,

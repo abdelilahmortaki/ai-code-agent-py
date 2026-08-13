@@ -7,36 +7,10 @@ import httpx
 
 from agent.config import OpenAiConfig, ProjectConfig
 from agent.guard import PromptGuardService
-from agent.models import PatchFile, PatchPlan, TestFailureContext, UserStory
+from agent.models import ProposalFile, PatchProposalPlan, TestFailureContext, UserStory
+from agent.patch_schema import PATCH_PLAN_SCHEMA
 
-# JSON Schema for structured OpenAI output — mirrors PatchPlanSchemaFactory.java
-_PATCH_PLAN_SCHEMA: dict = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "storyId":  {"type": "string", "description": "Story identifier"},
-        "summary":  {"type": "string", "description": "Technical summary of changes"},
-        "files": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "path":      {"type": "string", "description": "Relative file path"},
-                    "operation": {"type": "string", "enum": ["create", "modify", "delete"]},
-                    "content":   {
-                        "anyOf": [{"type": "string"}, {"type": "null"}],
-                        "description": "Complete new file content (null for delete)",
-                    },
-                },
-                "required": ["path", "operation", "content"],
-            },
-        },
-        "tests": {"type": "array", "items": {"type": "string"}},
-        "notes": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["storyId", "summary", "files", "tests", "notes"],
-}
+_PATCH_PLAN_SCHEMA: dict = PATCH_PLAN_SCHEMA
 
 
 class OpenAiService:
@@ -60,15 +34,15 @@ class OpenAiService:
         static_analysis: str,
         log_callback: Callable[[str], None] = lambda _msg: None,
         validation_feedback: str = "",
-    ) -> PatchPlan:
+    ) -> PatchProposalPlan:
         context = self.prompt_guard.build_prompt(
             project, story, relevant_files, static_analysis, validation_feedback
         )
         plan = self._call_structured(context.prompt, "spring_boot_patch_plan")
         plan = self.prompt_guard.restore_plan(context, plan)
-        return self.prompt_guard.validate_minimality(context, plan, story)
+        return plan
 
-    def generate_fix_plan(self, ctx: TestFailureContext) -> PatchPlan:
+    def generate_fix_plan(self, ctx: TestFailureContext) -> PatchProposalPlan:
         prompt = (
             "A previous patch failed.\n\n"
             f"storyId: {ctx.story_id}\n"
@@ -84,7 +58,7 @@ class OpenAiService:
 
     # ------------------------------------------------------------------ private
 
-    def _call_structured(self, prompt: str, schema_name: str) -> PatchPlan:
+    def _call_structured(self, prompt: str, schema_name: str) -> PatchProposalPlan:
         payload = {
             "model": self.cfg.responses_model,
             "reasoning": {"effort": "medium"},
@@ -112,10 +86,10 @@ class OpenAiService:
         resp.raise_for_status()
         raw_json = self._extract_text(resp.json())
         data = json.loads(raw_json)
-        return PatchPlan(
+        return PatchProposalPlan(
             storyId=data["storyId"],
             summary=data["summary"],
-            files=[PatchFile(**f) for f in data.get("files", [])],
+            files=[ProposalFile(**f) for f in data.get("files", [])],
             tests=data.get("tests", []),
             notes=data.get("notes", []),
         )
