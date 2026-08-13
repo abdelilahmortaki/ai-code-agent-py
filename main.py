@@ -15,6 +15,7 @@ from agent.factory import create_database_store, create_provider_runtime
 from agent.git_service import GitDiffService
 from agent.guard import PatchGuardService, PromptGuardService
 from agent.index import SemanticIndexService
+from agent.indexer import SymbolEmbeddingIndexer
 from agent.models import PatchResult, ProjectOverview, UserStory
 from agent.orchestrator import AgentOrchestrator
 from agent.paths import resolve_within
@@ -79,6 +80,7 @@ test_runner     = TestRunner()
 story_reader    = StoryFileReader()
 db_store        = create_database_store(settings)
 version_indexer = VersionIndexer(codebase, db_store)
+symbol_embedding_indexer = SymbolEmbeddingIndexer(codebase, db_store, provider_runtime.embedding)
 
 orchestrator = AgentOrchestrator(
     config=settings.agent,
@@ -144,6 +146,17 @@ def index_version(project_id: str):
     try:
         proj = orchestrator.config.project_by_id(project_id)
         return version_indexer.index_version(proj)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/agent/{project_id}/index/pg")
+def index_symbols_pg(project_id: str):
+    if db_store is None:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    try:
+        proj = orchestrator.config.project_by_id(project_id)
+        return symbol_embedding_indexer.index(proj)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
