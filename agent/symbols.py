@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from agent.codebase import CodebaseService
 from agent.config import ProjectConfig
+from agent.module_resolver import resolve_module
 from agent.paths import resolve_within
 from agent.versioning import VersionIndexer, _database_url, _redact_secrets, compute_file_hash
 
@@ -27,9 +28,11 @@ class Symbol:
 
     file: str
     module: str
+    package_name: str
     owner: str
     symbol_type: str
     name: str
+    qualified_name: str
     signature: str
     start_line: int
     end_line: int
@@ -308,14 +311,18 @@ class JavaSymbolParser:
     Malformed or unbalanced source raises SymbolParseError.
     """
 
-    def __init__(self, file: str = "") -> None:
+    def __init__(self, file: str = "", root: str | Path | None = None) -> None:
         self.file = file
+        self.root = Path(root) if root is not None else None
 
     # ------------------------------------------------------------------ API
 
     def parse(self, text: str) -> list[Symbol]:
         self._scanner = _JavaScanner(text)
         self._module = ""
+        self._package_name = ""
+        if self.root is not None:
+            self._module = resolve_module(self.root, self.file)
         self._symbols: list[Symbol] = []
         self._parse_block(owner="", enclosing_name="", is_enum=False, top_level=True)
         return self._symbols
@@ -356,7 +363,7 @@ class JavaSymbolParser:
             if token.value in ("package", "import", "module"):
                 if not top_level:
                     pass  # restricted keyword used as an identifier; fall through
-                elif token.value == "package" and not self._module:
+                elif token.value == "package" and not self._package_name:
                     self._parse_package()
                     continue
                 elif token.value == "import":
@@ -385,7 +392,7 @@ class JavaSymbolParser:
                 break
             if token.kind == "ident":
                 parts.append(token.value)
-        self._module = ".".join(parts)
+        self._package_name = ".".join(parts)
 
     def _parse_import(self) -> None:
         self._scanner.consume()  # 'import'
@@ -688,9 +695,11 @@ class JavaSymbolParser:
         return Symbol(
             file=self.file,
             module=self._module,
+            package_name=self._package_name,
             owner=owner,
             symbol_type=symbol_type,
             name=name,
+            qualified_name=".".join(part for part in (self._package_name, owner, name) if part),
             signature=_normalize_signature(sig),
             start_line=start_token.start_line,
             end_line=end_token.end_line,
@@ -728,15 +737,17 @@ class SymbolIndexer:
                     language="java",
                     file_hash=compute_file_hash(target),
                 )
-                symbols = JavaSymbolParser(file=rel).parse(content)
+                symbols = JavaSymbolParser(file=rel, root=root).parse(content)
                 for symbol in symbols:
                     self.store.insert_symbol(
                         project_version_id=version["id"],
                         file_id=file_row["id"],
                         module=symbol.module,
+                        package_name=symbol.package_name,
                         owner=symbol.owner,
                         symbol_type=symbol.symbol_type,
                         name=symbol.name,
+                        qualified_name=symbol.qualified_name,
                         signature=symbol.signature,
                         start_line=symbol.start_line,
                         end_line=symbol.end_line,
