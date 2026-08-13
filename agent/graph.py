@@ -589,6 +589,9 @@ class CodeGraphBuilder:
             if tier_same_package:
                 if len(tier_same_package) == 1:
                     return tier_same_package[0]
+                in_module = [c for c in tier_same_package if c.get("module") == module]
+                if len(in_module) == 1:
+                    return in_module[0]
                 return None
             tier_same_module = [c for c in candidates if c.get("module") == module]
             if tier_same_module:
@@ -598,6 +601,44 @@ class CodeGraphBuilder:
             if len(candidates) == 1:
                 return candidates[0]
             return None
+
+        def resolve_reference(
+            name: str,
+            module: str,
+            package_name: str,
+            path: str,
+            explicit_imports: dict[str, str],
+        ) -> dict | None:
+            """Resolve a type reference with explicit-import precedence.
+
+            - A qualified name resolves via the Java namespace index.
+            - A simple name BOUND by an explicit single-type import resolves
+              ONLY to that import's FQN; if the FQN is absent from the
+              project symbols the reference is unresolved. It NEVER falls
+              back to a project symbol that merely shares the simple name
+              (Java binds the name to the import).
+            - Any other simple name uses the deterministic tiered
+              resolution (same file > same package > same module > unique
+              global), otherwise unresolved.
+            """
+            if "." in name:
+                return resolve(name, module, package_name, path)
+            bound = explicit_imports.get(name)
+            if bound is not None:
+                candidates = [
+                    c
+                    for c in full_path_index.get(bound, [])
+                    if c["symbol_type"] in _TYPE_KINDS
+                ]
+                if len(candidates) == 1:
+                    return candidates[0]
+                if len(candidates) > 1:
+                    in_module = [c for c in candidates if c.get("module") == module]
+                    if len(in_module) == 1:
+                        return in_module[0]
+                    return None
+                return None
+            return resolve(name, module, package_name, path)
 
         root = Path(repo_root).resolve()
         file_texts: dict[str, str] = {}
@@ -630,6 +671,7 @@ class CodeGraphBuilder:
             ) or (file_symbols[0].get("package_name", "") if file_symbols else "")
 
             imports = _single_type_imports(text)
+            explicit_imports = dict(imports)
             type_symbols = [s for s in file_symbols if s["symbol_type"] in _TYPE_KINDS]
 
             for type_symbol in type_symbols:
@@ -638,7 +680,7 @@ class CodeGraphBuilder:
                     # no fallback to the simple name, so an import of an
                     # external type can never fabricate an edge to a project
                     # type that merely shares the simple name.
-                    target = resolve(full, module, package_name, path)
+                    target = resolve_reference(full, module, package_name, path, explicit_imports)
                     if target is None:
                         unresolved += 1
                         continue
@@ -646,13 +688,13 @@ class CodeGraphBuilder:
 
             for type_symbol in type_symbols:
                 for name in _header_types(type_symbol["signature"], "extends"):
-                    target = resolve(name, type_symbol["module"], type_symbol["package_name"], path)
+                    target = resolve_reference(name, type_symbol["module"], type_symbol["package_name"], path, explicit_imports)
                     if target is None:
                         unresolved += 1
                         continue
                     edges.add((type_symbol["id"], target["id"], INHERITS))
                 for name in _header_types(type_symbol["signature"], "implements"):
-                    target = resolve(name, type_symbol["module"], type_symbol["package_name"], path)
+                    target = resolve_reference(name, type_symbol["module"], type_symbol["package_name"], path, explicit_imports)
                     if target is None:
                         unresolved += 1
                         continue
@@ -690,7 +732,9 @@ class CodeGraphBuilder:
                     if not type_name:
                         unresolved += 1
                         continue
-                    target_type = resolve(type_name, method["module"], package_name, path)
+                    target_type = resolve_reference(
+                        type_name, method["module"], package_name, path, explicit_imports
+                    )
                     if target_type is None:
                         unresolved += 1
                         continue
@@ -700,7 +744,7 @@ class CodeGraphBuilder:
                             for s in symbols
                             if s["symbol_type"] == "constructor"
                             and s["name"] == target_type["name"]
-                            and s["package_name"] == target_type.get("package_name")
+                            and s["file_id"] == target_type["file_id"]
                             and s["owner"] == _type_qual(target_type)
                         ]
                     else:
@@ -709,7 +753,7 @@ class CodeGraphBuilder:
                             for s in symbols
                             if s["symbol_type"] == "method"
                             and s["name"] == call["method"]
-                            and s["package_name"] == target_type.get("package_name")
+                            and s["file_id"] == target_type["file_id"]
                             and s["owner"] == _type_qual(target_type)
                         ]
                     exact_arity = [
@@ -742,7 +786,7 @@ class CodeGraphBuilder:
                 )
                 referenced.discard(type_symbol["name"])
                 for name in sorted(referenced):
-                    target = resolve(name, module, package_name, path)
+                    target = resolve_reference(name, module, package_name, path, explicit_imports)
                     if target is None:
                         continue
                     target_path = target.get("path", "")
