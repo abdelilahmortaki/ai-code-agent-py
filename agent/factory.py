@@ -87,3 +87,23 @@ def create_provider_runtime(settings: Settings, prompt_guard: PromptGuardService
         )
 
     raise ValueError("AI_PROVIDER must be one of: azure, bedrock")
+
+
+def create_database_store(settings: Settings):
+    """Build a PgStore when a database URL is configured, else return None.
+
+    Lazy-imports psycopg so the rest of the app runs without it installed.
+    Fails fast (without echoing the DSN) when the database is unreachable.
+    """
+    url = settings.database.url.get_secret_value()
+    if not url:
+        return None
+
+    from agent.db.store import PgStore, PgStoreError
+
+    store = PgStore(url, embedding_dimensions=settings.database.embedding_dimensions)
+    try:
+        store.ping()
+    except PgStoreError as exc:
+        raise RuntimeError("database configured but unreachable") from exc
+    return store
