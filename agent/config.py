@@ -22,6 +22,7 @@ class ProjectConfig(BaseModel):
     index_file: str
     test_command: str = "mvn test"
     static_analysis_command: str = ""
+    validation_timeout_seconds: int = 300
     allowed_write_extensions: list[str] = [
         "java", "xml", "yml", "yaml", "properties", "json", "md", "txt"
     ]
