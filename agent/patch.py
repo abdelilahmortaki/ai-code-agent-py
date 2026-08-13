@@ -21,7 +21,9 @@ class PatchApplierService:
         self.guard.validate(project, plan.files)
         root = Path(project.repo_root).resolve()
         for patch in plan.files:
-            if patch.operation.lower() in {"modify", "delete"} and patch.base_file_hash:
+            if patch.operation.lower() in {"modify", "delete"}:
+                if not patch.base_file_hash:
+                    raise StalePatchError(STALE_PATCH)
                 target = resolve_within(root, patch.path)
                 try:
                     current_hash = hashlib.sha256(target.read_bytes()).hexdigest()
