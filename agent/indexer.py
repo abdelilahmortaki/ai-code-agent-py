@@ -83,6 +83,7 @@ class SymbolEmbeddingIndexer:
         symbols_indexed = 0
         embeddings_indexed = 0
         failed_files: list[str] = []
+        last_batch_dimensions: int | None = None
 
         for rel in self.codebase.scan_paths(project):
             if not rel.endswith(".java"):
@@ -96,7 +97,7 @@ class SymbolEmbeddingIndexer:
                     language="java",
                     file_hash=compute_file_hash(target),
                 )
-                symbols = JavaSymbolParser(file=rel).parse(content)
+                symbols = JavaSymbolParser(file=rel, root=root).parse(content)
                 payloads = [
                     truncate_payload(payload, max_payload_chars)
                     for payload in build_file_payloads(symbols, content)
@@ -108,20 +109,25 @@ class SymbolEmbeddingIndexer:
                             "Embedding provider returned an incomplete result: "
                             f"expected {len(payloads)} vectors, got {len(vectors)}"
                         )
-                    expected_dims = self.store.embedding_dimensions
-                    if any(len(vector) != expected_dims for vector in vectors):
+                    if not vectors or not vectors[0]:
+                        raise ValueError("Embedding provider returned an empty vector")
+                    batch_dimensions = len(vectors[0])
+                    last_batch_dimensions = batch_dimensions
+                    if any(len(vector) != batch_dimensions for vector in vectors):
                         raise ValueError(
-                            "Embedding provider returned a vector with the wrong "
-                            f"dimensions: expected {expected_dims}"
+                            "Embedding provider returned mixed vector dimensions "
+                            f"in one batch: expected {batch_dimensions}"
                         )
                     for symbol, vector in zip(symbols, vectors):
                         symbol_row = self.store.insert_symbol(
                             project_version_id=version["id"],
                             file_id=file_row["id"],
                             module=symbol.module,
+                            package_name=symbol.package_name,
                             owner=symbol.owner,
                             symbol_type=symbol.symbol_type,
                             name=symbol.name,
+                            qualified_name=symbol.qualified_name,
                             signature=symbol.signature,
                             start_line=symbol.start_line,
                             end_line=symbol.end_line,
@@ -132,7 +138,7 @@ class SymbolEmbeddingIndexer:
                             symbol_id=symbol_row["id"],
                             embedding=vector,
                             provider=self.embedding_provider.provider_name,
-                            model=self.embedding_provider.model_identity,
+                            deployment_or_model=self.embedding_provider.model_identity,
                         )
                     symbols_indexed += len(symbols)
                     embeddings_indexed += len(vectors)
@@ -149,7 +155,7 @@ class SymbolEmbeddingIndexer:
             "embedding": {
                 "provider": self.embedding_provider.provider_name,
                 "model": self.embedding_provider.model_identity,
-                "dimensions": self.store.embedding_dimensions,
+                "dimensions": last_batch_dimensions,
             },
         }
 
@@ -181,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--url",
         default=None,
-        help="Database URL (overrides AGENT_DATABASE_URL and config.yml database.url)",
+        help="Database URL (overrides DATABASE_URL)",
     )
     parser.add_argument(
         "--max-payload-chars",
@@ -194,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
     dsn = _database_url(args.url)
     if not dsn:
         print(
-            "No database URL configured: pass --url, set AGENT_DATABASE_URL, "
+            "No database URL configured: pass --url or set DATABASE_URL"
             "or set database.url in config.yml",
             file=sys.stderr,
         )

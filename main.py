@@ -156,9 +156,9 @@ def index_symbols_pg(project_id: str):
         raise HTTPException(status_code=503, detail="Database is not configured")
     try:
         proj = orchestrator.config.project_by_id(project_id)
-        return symbol_embedding_indexer.index(proj)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return symbol_embedding_indexer.index(proj)
 
 
 @app.post("/api/agent/{project_id}/generate/{story_id}", response_model=PatchResult)
