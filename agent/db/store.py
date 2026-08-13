@@ -91,6 +91,41 @@ class PgStore:
         except psycopg.Error as exc:
             raise PgStoreError("failed to upsert project") from exc
 
+    def find_project_by_external_id(self, external_id: str) -> dict | None:
+        """Return a project row by its external id, or None if it does not exist."""
+        if not external_id:
+            return None
+        sql = (
+            "SELECT id, external_id, name, repo_root, created_at FROM projects "
+            "WHERE external_id = %s"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (external_id,))
+                    row = cur.fetchone()
+                    return dict(row) if row is not None else None
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to find project by external id") from exc
+
+    def find_project_by_name(self, name: str) -> dict | None:
+        """Return the most recently created project with the given name, or None."""
+        if not name:
+            return None
+        sql = (
+            "SELECT id, external_id, name, repo_root, created_at FROM projects "
+            "WHERE lower(name) = lower(%s) "
+            "ORDER BY created_at DESC, id ASC LIMIT 1"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (name,))
+                    row = cur.fetchone()
+                    return dict(row) if row is not None else None
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to find project by name") from exc
+
     def create_version(
         self,
         project_id: str,
@@ -505,6 +540,227 @@ class PgStore:
         for row in rows:
             row["embedding"] = _vector_to_list(row["embedding"])
         return rows
+
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        """Escape ILIKE wildcards so the query is matched literally.
+
+        Escapes backslash, percent and underscore; the SQL uses
+        ``ESCAPE '\\'`` for the pattern operators.
+        """
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    def search_lexical(
+        self,
+        project_version_id: str,
+        query: str,
+        top_k: int,
+        min_similarity: float = 0.3,
+        symbol_type: str | None = None,
+        file_id: str | None = None,
+    ) -> list[dict]:
+        """Two-stage exact/lexical symbol search over PostgreSQL (F2.1).
+
+        Stage 1 probes the exact-name btree index (``name = query``, score
+        100.0). Stage 2 scans the same version with precedence-band scoring:
+
+        - exact_ci 95.0: ``lower(name) = lower(query)``;
+        - qualified 90.0: the module.owner.name or owner.name qualified name
+          equals the query (case-insensitive);
+        - prefix 80.0: ``name ILIKE 'query%'``;
+        - fuzzy 40.0 + 40.0 * similarity: pg_trgm similarity >= min_similarity
+          with a query of at least 3 characters and at most the symbol name
+          length + 3 (so multi-word fragments cannot be mistaken for a typo of
+          an identifier);
+        - contains 20.0: the query appears in signature, module, path, source
+          or name.
+
+        Stage 1 rows (score 100.0) outrank every stage-2 band; both stages
+        run inside one transaction, duplicates are removed by symbol id and
+        the merged set is ordered by ``lexical_score DESC, name ASC,
+        start_line ASC, id ASC`` (fully deterministic) and capped at top_k.
+        Only parameterized SQL is used; ILIKE patterns escape ``\\ % _`` via
+        ``_escape_like`` with ``ESCAPE '\\'``.
+        """
+        if top_k <= 0:
+            raise ValueError("top_k must be positive")
+        if not query:
+            raise ValueError("query must be non-empty")
+        escaped = self._escape_like(query)
+        prefix_pattern = escaped + "%"
+        contains_pattern = "%" + escaped + "%"
+        version_filter = "s.project_version_id = %s"
+        symbol_type_filter = "(%s::text IS NULL OR s.symbol_type = %s)"
+        file_filter = "(%s::uuid IS NULL OR s.file_id = %s::uuid)"
+
+        exact_sql = (
+            "SELECT s.id, s.project_version_id, s.file_id, f.path, s.module, "
+            "s.package_name, s.owner, s.symbol_type, s.name, s.qualified_name, "
+            "s.signature, s.start_line, s.end_line, s.source "
+            "FROM code_symbols s "
+            "JOIN code_files f ON f.id = s.file_id "
+            f"WHERE {version_filter} AND {symbol_type_filter} AND {file_filter} "
+            "AND s.name = %s"
+        )
+        exact_params = (project_version_id, symbol_type, symbol_type, file_id, file_id, query)
+
+        # A candidate is any row whose name, qualified name, signature, module,
+        # package, path or source mentions the query; the CASE bands assign
+        # the score. The qualified band uses the persisted Java namespace
+        # (qualified_name / owner.name) - never the Maven module.
+        stage2_sql = (
+            "SELECT s.id, s.project_version_id, s.file_id, f.path, s.module, "
+            "s.package_name, s.owner, s.symbol_type, s.name, s.qualified_name, "
+            "s.signature, s.start_line, s.end_line, s.source, "
+            "CASE "
+            "WHEN lower(s.name) = lower(%s) THEN 'exact_ci' "
+            "WHEN lower(s.qualified_name) = lower(%s) "
+            "OR lower(concat_ws('.', NULLIF(s.owner, ''), s.name)) = lower(%s) THEN 'qualified' "
+            "WHEN s.name ILIKE %s ESCAPE '\\' THEN 'prefix' "
+            "WHEN similarity(s.name, %s) >= %s AND char_length(%s) >= 3 "
+            "AND char_length(%s) <= char_length(s.name) + 3 THEN 'fuzzy' "
+            "ELSE 'contains' "
+            "END AS match_kind, "
+            "CASE "
+            "WHEN lower(s.name) = lower(%s) THEN 95.0 "
+            "WHEN lower(s.qualified_name) = lower(%s) "
+            "OR lower(concat_ws('.', NULLIF(s.owner, ''), s.name)) = lower(%s) THEN 90.0 "
+            "WHEN s.name ILIKE %s ESCAPE '\\' THEN 80.0 "
+            "WHEN similarity(s.name, %s) >= %s AND char_length(%s) >= 3 "
+            "AND char_length(%s) <= char_length(s.name) + 3 "
+            "THEN 40.0 + 40.0 * similarity(s.name, %s) "
+            "ELSE 20.0 "
+            "END AS lexical_score, "
+            "similarity(s.name, %s) AS name_sim "
+            "FROM code_symbols s "
+            "JOIN code_files f ON f.id = s.file_id "
+            f"WHERE {version_filter} AND {symbol_type_filter} AND {file_filter} "
+            "AND ( "
+            "lower(s.name) = lower(%s) "
+            "OR lower(s.qualified_name) = lower(%s) "
+            "OR lower(concat_ws('.', NULLIF(s.owner, ''), s.name)) = lower(%s) "
+            "OR s.name ILIKE %s ESCAPE '\\' "
+            "OR (similarity(s.name, %s) >= %s AND char_length(%s) >= 3 "
+            "AND char_length(%s) <= char_length(s.name) + 3) "
+            "OR s.signature ILIKE %s ESCAPE '\\' "
+            "OR s.module ILIKE %s ESCAPE '\\' "
+            "OR s.package_name ILIKE %s ESCAPE '\\' "
+            "OR s.qualified_name ILIKE %s ESCAPE '\\' "
+            "OR f.path ILIKE %s ESCAPE '\\' "
+            "OR s.source ILIKE %s ESCAPE '\\' "
+            ") "
+            "ORDER BY lexical_score DESC, s.name ASC, s.start_line ASC, s.id ASC "
+            "LIMIT %s"
+        )
+        stage2_params = (
+            query,  # 1  CASE exact_ci
+            query,  # 2  CASE qualified full
+            query,  # 3  CASE qualified short
+            prefix_pattern,  # 4  CASE prefix
+            query,  # 5  CASE fuzzy similarity
+            min_similarity,  # 6  CASE fuzzy threshold
+            query,  # 7  CASE fuzzy length
+            query,  # 8  CASE fuzzy length guard
+            query,  # 9  CASE score exact_ci
+            query,  # 10 CASE score qualified full
+            query,  # 11 CASE score qualified short
+            prefix_pattern,  # 12 CASE score prefix
+            query,  # 13 CASE score fuzzy similarity
+            min_similarity,  # 14 CASE score fuzzy threshold
+            query,  # 15 CASE score fuzzy length
+            query,  # 16 CASE score fuzzy length guard
+            query,  # 17 CASE score fuzzy score
+            query,  # 18 name_sim
+            project_version_id,  # 19 version
+            symbol_type,  # 20 symbol_type null check
+            symbol_type,  # 21 symbol_type equality
+            file_id,  # 22 file_id null check
+            file_id,  # 23 file_id equality
+            query,  # 24 WHERE exact_ci
+            query,  # 25 WHERE qualified full
+            query,  # 26 WHERE qualified short
+            prefix_pattern,  # 27 WHERE prefix
+            query,  # 28 WHERE fuzzy similarity
+            min_similarity,  # 29 WHERE fuzzy threshold
+            query,  # 30 WHERE fuzzy length
+            query,  # 31 WHERE fuzzy length guard
+            contains_pattern,  # 32 WHERE signature contains
+            contains_pattern,  # 33 WHERE module contains
+            contains_pattern,  # 34 WHERE package contains
+            contains_pattern,  # 35 WHERE qualified contains
+            contains_pattern,  # 36 WHERE path contains
+            contains_pattern,  # 37 WHERE source contains
+        )
+        try:
+            with self.transaction() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(exact_sql, exact_params)
+                    stage1 = [dict(row) for row in cur.fetchall()]
+                    for row in stage1:
+                        row["lexical_score"] = 100.0
+                        row["match_kind"] = "exact"
+                        row["name_sim"] = 1.0
+                        row["matched_fields"] = ["name"]
+                    cur.execute(stage2_sql, stage2_params + (top_k + len(stage1),))
+                    stage2 = [dict(row) for row in cur.fetchall()]
+        except PgStoreError as exc:
+            cause = exc.__cause__
+            if cause is not None and (
+                "similarity" in str(cause) or "pg_trgm" in str(cause)
+            ):
+                raise PgStoreError(
+                    "failed to search symbols lexically: pg_trgm is not enabled; "
+                    "apply agent/db/migrations/0003_lexical_search.sql"
+                ) from exc
+            raise
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to search symbols lexically") from exc
+        return self._merge_lexical(stage1, stage2, top_k, query)
+
+    @staticmethod
+    def _merge_lexical(
+        stage1: list[dict], stage2: list[dict], top_k: int, query: str
+    ) -> list[dict]:
+        """Merge exact (stage 1) and scored (stage 2) rows deterministically.
+
+        Stage-1 rows always win on duplicate ids (they outrank stage 2).
+        Final ordering: lexical_score DESC, name ASC, start_line ASC, id ASC.
+        """
+        query_lower = query.lower()
+        merged: dict[str, dict] = {}
+        for row in stage1 + stage2:
+            if not row.get("qualified_name"):
+                row["qualified_name"] = ".".join(
+                    part
+                    for part in (row.get("package_name"), row.get("owner"), row.get("name"))
+                    if part
+                )
+            if row["match_kind"] == "contains":
+                row["matched_fields"] = PgStore._lexical_matched_fields(row, query_lower)
+            elif row["match_kind"] == "qualified":
+                row["matched_fields"] = ["qualified_name"]
+            else:
+                row["matched_fields"] = ["name"]
+            row["lexical_score"] = float(row["lexical_score"])
+            row["name_sim"] = float(row["name_sim"])
+            source = row["source"] or ""
+            if len(source) > 2000:
+                row["source"] = source[:2000] + "...[TRUNCATED]"
+            merged.setdefault(row["id"], row)
+        return sorted(
+            merged.values(),
+            key=lambda r: (-r["lexical_score"], r["name"], r["start_line"], r["id"]),
+        )[:top_k]
+
+    @staticmethod
+    def _lexical_matched_fields(row: dict, query_lower: str) -> list[str]:
+        """Sorted list of fields containing the query for a 'contains' row."""
+        fields: list[str] = []
+        for field in ("signature", "module", "package_name", "qualified_name", "path", "source", "name"):
+            value = row.get(field)
+            if value and query_lower in str(value).lower():
+                fields.append(field)
+        return sorted(fields)
 
     def count_symbols(self, project_version_id: str | None = None) -> int:
         sql = (
