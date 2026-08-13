@@ -162,7 +162,9 @@ class PgStore:
         symbol_type: str,
         file_id: str | None = None,
         module: str = "",
+        package_name: str = "",
         owner: str = "",
+        qualified_name: str = "",
         signature: str = "",
         start_line: int = 0,
         end_line: int = 0,
@@ -172,11 +174,12 @@ class PgStore:
             raise ValueError("name must be non-empty")
         sql = (
             "INSERT INTO code_symbols "
-            "(id, project_version_id, file_id, module, owner, symbol_type, name, "
-            "signature, start_line, end_line, source) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-            "RETURNING id, project_version_id, file_id, module, owner, symbol_type, "
-            "name, signature, start_line, end_line, source, created_at"
+            "(id, project_version_id, file_id, module, package_name, owner, "
+            "symbol_type, name, qualified_name, signature, start_line, end_line, source) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "RETURNING id, project_version_id, file_id, module, package_name, owner, "
+            "symbol_type, name, qualified_name, signature, start_line, end_line, "
+            "source, created_at"
         )
         try:
             with self._connect() as conn:
@@ -188,9 +191,11 @@ class PgStore:
                             project_version_id,
                             file_id,
                             module,
+                            package_name,
                             owner,
                             symbol_type,
                             name,
+                            qualified_name,
                             signature,
                             start_line,
                             end_line,
