@@ -36,16 +36,34 @@ def _config_file_url() -> str:
 def _resolve_database_url(args_url: str | None) -> str:
     if args_url:
         return args_url
-    env_url = os.getenv("AGENT_DATABASE_URL", "").strip()
+    env_url = os.getenv("DATABASE_URL", "").strip()
     if env_url:
         return env_url
     config_url = _config_file_url().strip()
     if config_url:
         return config_url
     raise SystemExit(
-        "No database URL configured: pass --url, set AGENT_DATABASE_URL, "
-        "or set database.url in config.yml"
+        "No database URL configured: pass --url or set DATABASE_URL"
     )
+
+
+def _migration_sort_key(name: str) -> tuple[int, int, str]:
+    """Order migrations by leading version numbers, not raw filename.
+
+    ``0001_init.sql`` (1, 0) sorts before ``0001_1_provider_safe_embeddings.sql``
+    (1, 1), which sorts before ``0002_...`` (2, 0). Plain filename sorting
+    would put ``0001_1_...`` before ``0001_init...``.
+    """
+    base = name[:-4] if name.endswith(".sql") else name
+    parts = base.split("_")
+
+    def num(part: str) -> int:
+        try:
+            return int(part)
+        except ValueError:
+            return -1
+
+    return (num(parts[0]), num(parts[1]) if len(parts) > 1 else 0, name)
 
 
 def _applied_versions(conn: psycopg.Connection) -> set[str]:
@@ -62,7 +80,7 @@ def run_migrations(dsn: str) -> int:
     applied = 0
     with psycopg.connect(dsn, row_factory=dict_row) as conn:
         known = _applied_versions(conn)
-        for path in sorted(_MIGRATIONS_DIR.glob("*.sql")):
+        for path in sorted(_MIGRATIONS_DIR.glob("*.sql"), key=lambda p: _migration_sort_key(p.name)):
             version = path.name
             if version in known:
                 continue
@@ -84,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--url",
         default=None,
-        help="Database URL (overrides AGENT_DATABASE_URL and config.yml database.url)",
+        help="Database URL (overrides DATABASE_URL)",
     )
     args = parser.parse_args(argv)
 
