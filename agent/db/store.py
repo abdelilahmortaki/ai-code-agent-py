@@ -73,22 +73,64 @@ class PgStore:
         except psycopg.Error as exc:
             raise PgStoreError("failed to upsert project") from exc
 
-    def create_version(self, project_id: str, version_number: int, label: str = "") -> dict:
+    def create_version(
+        self,
+        project_id: str,
+        version_number: int,
+        label: str = "",
+        source_hash: str = "",
+        branch: str = "",
+        commit_sha: str = "",
+    ) -> dict:
         if version_number <= 0:
             raise ValueError("version_number must be positive")
         sql = (
-            "INSERT INTO project_versions (id, project_id, version_number, label) "
-            "VALUES (%s, %s, %s, %s) "
-            "ON CONFLICT (project_id, version_number) DO UPDATE SET label = EXCLUDED.label "
-            "RETURNING id, project_id, version_number, label, created_at"
+            "INSERT INTO project_versions "
+            "(id, project_id, version_number, label, source_hash, branch, commit_sha) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (project_id, version_number) DO UPDATE SET label = EXCLUDED.label, "
+            "source_hash = EXCLUDED.source_hash, branch = EXCLUDED.branch, "
+            "commit_sha = EXCLUDED.commit_sha "
+            "RETURNING id, project_id, version_number, label, source_hash, branch, "
+            "commit_sha, created_at"
         )
         try:
             with self._connect() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(sql, (self._new_id(), project_id, version_number, label))
+                    cur.execute(
+                        sql,
+                        (self._new_id(), project_id, version_number, label, source_hash, branch, commit_sha),
+                    )
                     return dict(cur.fetchone())
         except psycopg.Error as exc:
             raise PgStoreError("failed to create project version") from exc
+
+    def next_version_number(self, project_id: str) -> int:
+        """Return the next version_number for a project (max + 1, starting at 1)."""
+        sql = "SELECT COALESCE(MAX(version_number), 0) + 1 AS next FROM project_versions WHERE project_id = %s"
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (project_id,))
+                    return int(cur.fetchone()["next"])
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to compute next version number") from exc
+
+    def latest_version(self, project_id: str) -> dict | None:
+        """Return the highest-numbered version of a project, or None if none exist."""
+        sql = (
+            "SELECT id, project_id, version_number, label, source_hash, branch, "
+            "commit_sha, created_at FROM project_versions "
+            "WHERE project_id = %s ORDER BY version_number DESC LIMIT 1"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (project_id,))
+                    row = cur.fetchone()
+                    return dict(row) if row is not None else None
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to load latest project version") from exc
 
     def upsert_file(
         self,
@@ -222,6 +264,7 @@ class PgStore:
         embedding: Sequence[float],
         top_k: int = 5,
         file_id: str | None = None,
+        project_version_id: str | None = None,
     ) -> list[dict]:
         if top_k <= 0:
             raise ValueError("top_k must be positive")
@@ -237,10 +280,19 @@ class PgStore:
             "FROM symbol_embeddings se "
             "JOIN code_symbols s ON s.id = se.symbol_id "
             "WHERE (%s::uuid IS NULL OR s.file_id = %s::uuid) "
+            "AND (%s::uuid IS NULL OR s.project_version_id = %s::uuid) "
             "ORDER BY se.embedding <=> %s::vector "
             "LIMIT %s"
         )
-        params: tuple = (str(vector), file_id, file_id, str(vector), top_k)
+        params: tuple = (
+            str(vector),
+            file_id,
+            file_id,
+            project_version_id,
+            project_version_id,
+            str(vector),
+            top_k,
+        )
         try:
             with self._connect() as conn:
                 with conn.cursor() as cur:

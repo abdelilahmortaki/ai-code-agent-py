@@ -21,6 +21,7 @@ from agent.paths import resolve_within
 from agent.patch import PatchApplierService
 from agent.runner import TestRunner
 from agent.stories import StoryFileReader
+from agent.versioning import VersionIndexer
 
 # ---------------------------------------------------------------------------
 # Project registry — persisted to .agent/projects.json
@@ -77,6 +78,7 @@ static_analysis = StaticAnalysisService(codebase)
 test_runner     = TestRunner()
 story_reader    = StoryFileReader()
 db_store        = create_database_store(settings)
+version_indexer = VersionIndexer(codebase, db_store)
 
 orchestrator = AgentOrchestrator(
     config=settings.agent,
@@ -131,6 +133,17 @@ def rebuild_index(project_id: str):
     try:
         msg = orchestrator.rebuild_index(project_id)
         return {"message": msg}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/agent/{project_id}/index/version")
+def index_version(project_id: str):
+    if db_store is None:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    try:
+        proj = orchestrator.config.project_by_id(project_id)
+        return version_indexer.index_version(proj)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
