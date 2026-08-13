@@ -816,12 +816,13 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         store = PgStore(dsn)
-        root = Path(args.repo_root).resolve() if args.repo_root else Path(".")
         project_row = None
         if args.project_id:
             project_row = store.find_project_by_external_id(args.project_id)
         if project_row is None and args.repo_root:
-            project_row = store.find_project_by_external_id(str(root))
+            project_row = store.find_project_by_external_id(
+                str(Path(args.repo_root).resolve())
+            )
         if project_row is None and args.name:
             project_row = store.find_project_by_name(args.name)
         if project_row is None:
@@ -831,6 +832,14 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
+        # File texts for import scanning are read from disk; without an
+        # explicit --repo-root, read them from the stored index-time root
+        # instead of the CLI's current working directory.
+        root = (
+            Path(args.repo_root).resolve()
+            if args.repo_root
+            else Path(project_row.get("repo_root") or ".")
+        )
         if args.version is not None:
             version = store.find_version_by_number(project_row["id"], args.version)
         else:
