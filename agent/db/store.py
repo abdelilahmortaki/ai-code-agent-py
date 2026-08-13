@@ -597,8 +597,8 @@ class PgStore:
 
         exact_sql = (
             "SELECT s.id, s.project_version_id, s.file_id, f.path, s.module, "
-            "s.owner, s.symbol_type, s.name, s.signature, s.start_line, "
-            "s.end_line, s.source "
+            "s.package_name, s.owner, s.symbol_type, s.name, s.qualified_name, "
+            "s.signature, s.start_line, s.end_line, s.source "
             "FROM code_symbols s "
             "JOIN code_files f ON f.id = s.file_id "
             f"WHERE {version_filter} AND {symbol_type_filter} AND {file_filter} "
@@ -607,14 +607,16 @@ class PgStore:
         exact_params = (project_version_id, symbol_type, symbol_type, file_id, file_id, query)
 
         # A candidate is any row whose name, qualified name, signature, module,
-        # path or source mentions the query; the CASE bands assign the score.
+        # package, path or source mentions the query; the CASE bands assign
+        # the score. The qualified band uses the persisted Java namespace
+        # (qualified_name / owner.name) - never the Maven module.
         stage2_sql = (
             "SELECT s.id, s.project_version_id, s.file_id, f.path, s.module, "
-            "s.owner, s.symbol_type, s.name, s.signature, s.start_line, "
-            "s.end_line, s.source, "
+            "s.package_name, s.owner, s.symbol_type, s.name, s.qualified_name, "
+            "s.signature, s.start_line, s.end_line, s.source, "
             "CASE "
             "WHEN lower(s.name) = lower(%s) THEN 'exact_ci' "
-            "WHEN lower(concat_ws('.', s.module, NULLIF(s.owner, ''), s.name)) = lower(%s) "
+            "WHEN lower(s.qualified_name) = lower(%s) "
             "OR lower(concat_ws('.', NULLIF(s.owner, ''), s.name)) = lower(%s) THEN 'qualified' "
             "WHEN s.name ILIKE %s ESCAPE '\\' THEN 'prefix' "
             "WHEN similarity(s.name, %s) >= %s AND char_length(%s) >= 3 "
@@ -623,7 +625,7 @@ class PgStore:
             "END AS match_kind, "
             "CASE "
             "WHEN lower(s.name) = lower(%s) THEN 95.0 "
-            "WHEN lower(concat_ws('.', s.module, NULLIF(s.owner, ''), s.name)) = lower(%s) "
+            "WHEN lower(s.qualified_name) = lower(%s) "
             "OR lower(concat_ws('.', NULLIF(s.owner, ''), s.name)) = lower(%s) THEN 90.0 "
             "WHEN s.name ILIKE %s ESCAPE '\\' THEN 80.0 "
             "WHEN similarity(s.name, %s) >= %s AND char_length(%s) >= 3 "
@@ -637,13 +639,15 @@ class PgStore:
             f"WHERE {version_filter} AND {symbol_type_filter} AND {file_filter} "
             "AND ( "
             "lower(s.name) = lower(%s) "
-            "OR lower(concat_ws('.', s.module, NULLIF(s.owner, ''), s.name)) = lower(%s) "
+            "OR lower(s.qualified_name) = lower(%s) "
             "OR lower(concat_ws('.', NULLIF(s.owner, ''), s.name)) = lower(%s) "
             "OR s.name ILIKE %s ESCAPE '\\' "
             "OR (similarity(s.name, %s) >= %s AND char_length(%s) >= 3 "
             "AND char_length(%s) <= char_length(s.name) + 3) "
             "OR s.signature ILIKE %s ESCAPE '\\' "
             "OR s.module ILIKE %s ESCAPE '\\' "
+            "OR s.package_name ILIKE %s ESCAPE '\\' "
+            "OR s.qualified_name ILIKE %s ESCAPE '\\' "
             "OR f.path ILIKE %s ESCAPE '\\' "
             "OR s.source ILIKE %s ESCAPE '\\' "
             ") "
@@ -684,8 +688,10 @@ class PgStore:
             query,  # 31 WHERE fuzzy length guard
             contains_pattern,  # 32 WHERE signature contains
             contains_pattern,  # 33 WHERE module contains
-            contains_pattern,  # 34 WHERE path contains
-            contains_pattern,  # 35 WHERE source contains
+            contains_pattern,  # 34 WHERE package contains
+            contains_pattern,  # 35 WHERE qualified contains
+            contains_pattern,  # 36 WHERE path contains
+            contains_pattern,  # 37 WHERE source contains
         )
         try:
             with self.transaction() as conn:
@@ -725,9 +731,12 @@ class PgStore:
         query_lower = query.lower()
         merged: dict[str, dict] = {}
         for row in stage1 + stage2:
-            row["qualified_name"] = ".".join(
-                part for part in (row["module"], row["owner"], row["name"]) if part
-            )
+            if not row.get("qualified_name"):
+                row["qualified_name"] = ".".join(
+                    part
+                    for part in (row.get("package_name"), row.get("owner"), row.get("name"))
+                    if part
+                )
             if row["match_kind"] == "contains":
                 row["matched_fields"] = PgStore._lexical_matched_fields(row, query_lower)
             elif row["match_kind"] == "qualified":
@@ -749,7 +758,7 @@ class PgStore:
     def _lexical_matched_fields(row: dict, query_lower: str) -> list[str]:
         """Sorted list of fields containing the query for a 'contains' row."""
         fields: list[str] = []
-        for field in ("signature", "module", "path", "source", "name"):
+        for field in ("signature", "module", "package_name", "qualified_name", "path", "source", "name"):
             value = row.get(field)
             if value and query_lower in str(value).lower():
                 fields.append(field)

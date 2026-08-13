@@ -154,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--url",
         default=None,
-        help="Database URL (overrides AGENT_DATABASE_URL and config.yml "
+        help="Database URL (overrides DATABASE_URL)"
         "database.url)",
     )
     args = parser.parse_args(argv)
@@ -162,8 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     dsn = _database_url(args.url)
     if not dsn:
         print(
-            "No database URL configured: pass --url, set AGENT_DATABASE_URL, "
-            "or set database.url in config.yml",
+            "No database URL configured: pass --url or set DATABASE_URL",
             file=sys.stderr,
         )
         return 1
