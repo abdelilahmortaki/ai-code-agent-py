@@ -101,7 +101,7 @@ def create_database_store(settings: Settings):
 
     from agent.db.store import PgStore, PgStoreError
 
-    store = PgStore(url, embedding_dimensions=settings.database.embedding_dimensions)
+    store = PgStore(url)
     try:
         store.ping()
     except PgStoreError as exc:
