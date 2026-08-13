@@ -102,9 +102,9 @@ JAVA_LANG_TYPES = frozenset(
 )
 
 
-def _dotted_path(module: str, owner: str, name: str) -> str:
-    """Join non-empty path segments with dots."""
-    return ".".join(part for part in (module, owner, name) if part)
+def _dotted_path(package_name: str, owner: str, name: str) -> str:
+    """Join non-empty Java namespace segments with dots."""
+    return ".".join(part for part in (package_name, owner, name) if part)
 
 
 def _extract_imports(text: str) -> list[str]:
@@ -146,18 +146,18 @@ def _extract_imports(text: str) -> list[str]:
 def _owner_type_map(text: str) -> dict[str, Symbol]:
     """Map dotted path -> type symbol for one compilation unit.
 
-    The dotted path is module.owner.name (empty segments omitted), so
-    ``com.acme.service.CustomerService.Inner`` addresses the nested type
-    and ``com.acme.service.CustomerService`` its enclosing type. Raises
-    SymbolParseError for malformed input; callers treat that as "no
-    owner evidence available".
+    The dotted path is the Java namespace package_name.owner.name (empty
+    segments omitted), so ``com.shoppoc.domain.CustomerService.Inner``
+    addresses the nested type and ``com.shoppoc.domain.CustomerService``
+    its enclosing type. Raises SymbolParseError for malformed input;
+    callers treat that as "no owner evidence available".
     """
     symbols = JavaSymbolParser().parse(text)
     owners: dict[str, Symbol] = {}
     for symbol in symbols:
         if symbol.symbol_type not in ("class", "interface", "enum", "record", "annotation"):
             continue
-        owners[_dotted_path(symbol.module, symbol.owner, symbol.name)] = symbol
+        owners[_dotted_path(symbol.package_name, symbol.owner, symbol.name)] = symbol
     return owners
 
 
@@ -277,9 +277,11 @@ def _render_payload(symbol: Symbol, deps: list[str]) -> str:
     lines = [
         f"Module: {symbol.module}",
         f"File: {Path(symbol.file).name}",
+        f"Package: {symbol.package_name}",
         f"Class: {symbol.owner or symbol.name}",
         f"Symbol Type: {symbol_type}",
         f"{kind}: {symbol.name}",
+        f"Qualified Name: {symbol.qualified_name}",
         f"Signature: {symbol.signature}",
         "",
         "Useful dependencies:",
