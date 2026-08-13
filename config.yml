@@ -18,7 +18,6 @@ agent:
   projects: []              # empty — projects are added at runtime via Browse Folder
 
 # Optional PostgreSQL persistence (F1.1) — DISABLED by default.
-# Enable by uncommenting the block below, or by setting AGENT_DATABASE_URL.
+# Enable by uncommenting the block below, or by setting DATABASE_URL.
 # database:
 #   url: "postgresql://postgres:password@localhost:5432/agentdb"
-#   embedding_dimensions: 1024
