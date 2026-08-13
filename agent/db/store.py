@@ -706,3 +706,92 @@ class PgStore:
                     return int(cur.fetchone()["n"])
         except psycopg.Error as exc:
             raise PgStoreError("failed to count symbols") from exc
+
+    def list_symbols(self, project_version_id: str) -> list[dict]:
+        """Return every code_symbols row of a version joined with its file path."""
+        sql = (
+            "SELECT s.id, s.file_id, f.path, s.module, s.owner, s.symbol_type, "
+            "s.name, s.signature, s.start_line, s.end_line, s.source "
+            "FROM code_symbols s "
+            "JOIN code_files f ON f.id = s.file_id "
+            "WHERE s.project_version_id = %s "
+            "ORDER BY s.id"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (project_version_id,))
+                    return [dict(row) for row in cur.fetchall()]
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to list code symbols") from exc
+
+    def insert_edges(
+        self,
+        project_version_id: str,
+        edges: Sequence[tuple[str, str, str]],
+    ) -> int:
+        """Insert code_edges rows (source_symbol_id, target_symbol_id,
+        relation_type) inside one transaction.
+
+        Each row gets a fresh id; an empty ``edges`` sequence is a no-op
+        returning 0.
+        """
+        if not edges:
+            return 0
+        sql = (
+            "INSERT INTO code_edges (id, project_version_id, source_symbol_id, "
+            "target_symbol_id, relation_type) VALUES (%s, %s, %s, %s, %s)"
+        )
+        params = [
+            (self._new_id(), project_version_id, source_id, target_id, relation_type)
+            for source_id, target_id, relation_type in edges
+        ]
+        try:
+            with self.transaction() as conn:
+                with conn.cursor() as cur:
+                    cur.executemany(sql, params)
+                    return cur.rowcount
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to insert code edges") from exc
+
+    def delete_edges(self, project_version_id: str) -> int:
+        """Delete every code_edges row of a version; returns the deleted count."""
+        sql = "DELETE FROM code_edges WHERE project_version_id = %s"
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (project_version_id,))
+                    return cur.rowcount
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to delete code edges") from exc
+
+    def count_edges(self, project_version_id: str | None = None) -> int:
+        sql = (
+            "SELECT count(*) AS n FROM code_edges "
+            "WHERE (%s::uuid IS NULL OR project_version_id = %s::uuid)"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (project_version_id, project_version_id))
+                    return int(cur.fetchone()["n"])
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to count code edges") from exc
+
+    def find_version_by_number(
+        self, project_id: str, version_number: int
+    ) -> dict | None:
+        """Return a project version row by its version number, or None."""
+        sql = (
+            "SELECT id, project_id, version_number, label, source_hash, branch, "
+            "commit_sha, created_at FROM project_versions "
+            "WHERE project_id = %s AND version_number = %s"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (project_id, version_number))
+                    row = cur.fetchone()
+                    return dict(row) if row is not None else None
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to find project version by number") from exc

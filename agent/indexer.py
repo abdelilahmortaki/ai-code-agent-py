@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from agent.codebase import CodebaseService
 from agent.config import ProjectConfig
+from agent.graph import CodeGraphBuilder
 from agent.paths import resolve_within
 from agent.payloads import build_file_payloads
 from agent.providers import EmbeddingProvider
@@ -103,6 +104,10 @@ class SymbolEmbeddingIndexer:
             except (SymbolParseError, OSError):
                 failed_files.append(rel)
 
+        graph_result = CodeGraphBuilder(self.codebase, self.store).build(
+            project_version_id=version["id"], repo_root=str(root)
+        )
+
         return {
             "version": version,
             "files_indexed": files_indexed,
@@ -114,6 +119,7 @@ class SymbolEmbeddingIndexer:
                 "model": self.embedding_provider.model_identity,
                 "dimensions": self.store.embedding_dimensions,
             },
+            "graph": graph_result,
         }
 
     def index_incremental(
@@ -226,6 +232,10 @@ class SymbolEmbeddingIndexer:
             except (SymbolParseError, OSError):
                 failed_files.append(rel)
 
+        graph_result = CodeGraphBuilder(self.codebase, self.store).build(
+            project_version_id=version["id"], repo_root=str(root)
+        )
+
         return {
             "version": version,
             "previous_version": previous_version,
@@ -245,6 +255,7 @@ class SymbolEmbeddingIndexer:
                 "model": self.embedding_provider.model_identity,
                 "dimensions": self.store.embedding_dimensions,
             },
+            "graph": graph_result,
         }
 
     # ------------------------------------------------------------------ shared
