@@ -99,11 +99,11 @@ class VersionIndexer:
 
         source_hash = compute_source_hash(files)
         git = capture_git_metadata(root)
-        external_id = str(root)
+        external_id = project.id
         project_row = self.store.upsert_project(
             external_id=external_id,
             name=project.name,
-            repo_root=external_id,
+            repo_root=str(root),
         )
         version = self.store.create_version(
             project_id=project_row["id"],
@@ -113,6 +113,9 @@ class VersionIndexer:
             commit_sha=git.commit_sha,
         )
         for rel, target in files:
+            # DB failures (PgStoreError) abort indexing; only local read
+            # failures of an individual file are tolerated (it was readable
+            # at scan time, so this is a race).
             try:
                 self.store.upsert_file(
                     project_version_id=version["id"],
@@ -120,7 +123,7 @@ class VersionIndexer:
                     language=target.suffix.lstrip(".").lower(),
                     file_hash=compute_file_hash(target),
                 )
-            except Exception:
+            except OSError:
                 continue
         return {"version": version, "file_count": len(files)}
 
@@ -128,6 +131,8 @@ class VersionIndexer:
         self,
         project_version_id: str,
         embedding: Sequence[float],
+        provider: str,
+        deployment_or_model: str,
         top_k: int = 5,
         file_id: str | None = None,
     ) -> list[dict]:
@@ -136,6 +141,8 @@ class VersionIndexer:
             raise RuntimeError("database is not configured")
         return self.store.search_similar(
             embedding,
+            provider=provider,
+            deployment_or_model=deployment_or_model,
             top_k=top_k,
             file_id=file_id,
             project_version_id=project_version_id,
@@ -161,7 +168,7 @@ def _redact_secrets(text: str, dsn: str) -> str:
 def _database_url(url_arg: str | None) -> str:
     if url_arg:
         return url_arg
-    env_url = os.getenv("AGENT_DATABASE_URL", "").strip()
+    env_url = os.getenv("DATABASE_URL", "").strip()
     if env_url:
         return env_url
     try:
@@ -182,20 +189,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--external-id",
         default="",
-        help="Unique external id (defaults to the resolved repo root path)",
+        help="Project identity stored as projects.external_id (defaults to the resolved repo root path)",
     )
     parser.add_argument(
         "--url",
         default=None,
-        help="Database URL (overrides AGENT_DATABASE_URL and config.yml database.url)",
+        help="Database URL (overrides DATABASE_URL)",
     )
     args = parser.parse_args(argv)
 
     dsn = _database_url(args.url)
     if not dsn:
         print(
-            "No database URL configured: pass --url, set AGENT_DATABASE_URL, "
-            "or set database.url in config.yml",
+            "No database URL configured: pass --url or set DATABASE_URL",
             file=sys.stderr,
         )
         return 1
