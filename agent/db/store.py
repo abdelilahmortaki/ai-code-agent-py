@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Sequence
 
 import psycopg
@@ -43,6 +45,23 @@ class PgStore:
 
     def _new_id(self) -> str:
         return str(uuid.uuid4())
+
+    @contextmanager
+    def transaction(self) -> Iterator[psycopg.Connection]:
+        """Run a block inside one database transaction.
+
+        Commits on success, rolls back and re-raises on any exception
+        (psycopg.Error is wrapped in PgStoreError), and always closes the
+        connection in ``finally``.
+        """
+        conn = self._connect()
+        try:
+            with conn:
+                yield conn
+        except psycopg.Error as exc:
+            raise PgStoreError("database transaction failed") from exc
+        finally:
+            conn.close()
 
     def ping(self) -> None:
         try:
@@ -155,6 +174,130 @@ class PgStore:
                     return dict(cur.fetchone())
         except psycopg.Error as exc:
             raise PgStoreError("failed to upsert code file") from exc
+
+    def list_files(self, project_version_id: str) -> list[dict]:
+        """Return every code_files row of a version: id, path, language, file_hash."""
+        sql = (
+            "SELECT id, path, language, file_hash FROM code_files "
+            "WHERE project_version_id = %s ORDER BY path"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (project_version_id,))
+                    return [dict(row) for row in cur.fetchall()]
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to list code files") from exc
+
+    def copy_unchanged_file_symbols(
+        self,
+        new_version_id: str,
+        old_version_id: str,
+        paths: Sequence[str],
+    ) -> dict:
+        """Copy symbols + embeddings of unchanged files into a new version.
+
+        Runs in a single transaction. Only files whose path exists in both
+        versions AND whose stored file_hash matches (hash double-check) are
+        copied. Symbol rows are recreated with fresh ids; embeddings are
+        copied with an exact-content symbol remap (module, owner, symbol_type,
+        name, signature, start_line, end_line, source) so every new symbol
+        receives the embedding that belonged to its old twin.
+
+        Returns {"paths", "symbols_copied", "embeddings_copied",
+        "symbols_by_path"} where symbols_by_path maps each copied path to the
+        number of symbols copied for it. An empty ``paths`` list is a no-op.
+        """
+        if not paths:
+            return {"paths": [], "symbols_copied": 0, "embeddings_copied": 0, "symbols_by_path": {}}
+        symbol_sql = (
+            "INSERT INTO code_symbols "
+            "(id, project_version_id, file_id, module, owner, symbol_type, name, "
+            "signature, start_line, end_line, source) "
+            "SELECT gen_random_uuid(), %s, new_files.id, old_s.module, old_s.owner, "
+            "old_s.symbol_type, old_s.name, old_s.signature, old_s.start_line, "
+            "old_s.end_line, old_s.source "
+            "FROM code_symbols old_s "
+            "JOIN code_files old_files ON old_files.id = old_s.file_id "
+            "AND old_files.project_version_id = %s "
+            "JOIN code_files new_files ON new_files.project_version_id = %s "
+            "AND new_files.path = old_files.path "
+            "AND new_files.file_hash = old_files.file_hash "
+            "AND new_files.path = ANY(%s) "
+            "WHERE old_s.project_version_id = %s "
+            "RETURNING id AS new_symbol_id, file_id AS new_file_id"
+        )
+        embedding_sql = (
+            "INSERT INTO symbol_embeddings "
+            "(id, project_version_id, symbol_id, embedding, provider, model) "
+            "SELECT gen_random_uuid(), %s, new_s.id, old_se.embedding, "
+            "old_se.provider, old_se.model "
+            "FROM symbol_embeddings old_se "
+            "JOIN code_symbols old_s ON old_s.id = old_se.symbol_id "
+            "AND old_s.project_version_id = %s "
+            "JOIN code_files old_files ON old_files.id = old_s.file_id "
+            "JOIN code_files new_files ON new_files.project_version_id = %s "
+            "AND new_files.path = old_files.path "
+            "AND new_files.path = ANY(%s) "
+            "JOIN code_symbols new_s ON new_s.project_version_id = %s "
+            "AND new_s.file_id = new_files.id "
+            "AND new_s.module = old_s.module "
+            "AND new_s.owner = old_s.owner "
+            "AND new_s.symbol_type = old_s.symbol_type "
+            "AND new_s.name = old_s.name "
+            "AND new_s.signature = old_s.signature "
+            "AND new_s.start_line = old_s.start_line "
+            "AND new_s.end_line = old_s.end_line "
+            "AND new_s.source = old_s.source "
+            "WHERE old_se.project_version_id = %s"
+        )
+        symbol_params = (
+            new_version_id,
+            old_version_id,
+            new_version_id,
+            list(paths),
+            old_version_id,
+        )
+        embedding_params = (
+            new_version_id,
+            old_version_id,
+            new_version_id,
+            list(paths),
+            new_version_id,
+            old_version_id,
+        )
+        try:
+            with self.transaction() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(symbol_sql, symbol_params)
+                    copied_rows = [dict(row) for row in cur.fetchall()]
+                    cur.execute(embedding_sql, embedding_params)
+                    embeddings_copied = cur.rowcount
+                    file_ids = [row["new_file_id"] for row in copied_rows]
+                    paths_by_file: dict = {}
+                    if file_ids:
+                        cur.execute(
+                            "SELECT id, path FROM code_files "
+                            "WHERE project_version_id = %s AND id = ANY(%s)",
+                            (new_version_id, file_ids),
+                        )
+                        for row in cur.fetchall():
+                            paths_by_file[row["id"]] = row["path"]
+        except PgStoreError:
+            raise
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to copy unchanged file symbols") from exc
+        symbols_by_path: dict[str, int] = {}
+        for row in copied_rows:
+            path = paths_by_file.get(row["new_file_id"])
+            if path is not None:
+                symbols_by_path[path] = symbols_by_path.get(path, 0) + 1
+        return {
+            "paths": list(paths),
+            "symbols_copied": len(copied_rows),
+            "embeddings_copied": embeddings_copied,
+            "symbols_by_path": symbols_by_path,
+        }
 
     def insert_symbol(
         self,

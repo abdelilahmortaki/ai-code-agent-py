@@ -151,11 +151,13 @@ def index_version(project_id: str):
 
 
 @app.post("/api/agent/{project_id}/index/pg")
-def index_symbols_pg(project_id: str):
+def index_symbols_pg(project_id: str, incremental: bool = Query(default=False)):
     if db_store is None:
         raise HTTPException(status_code=503, detail="Database is not configured")
     try:
         proj = orchestrator.config.project_by_id(project_id)
+        if incremental:
+            return symbol_embedding_indexer.index_incremental(proj)
         return symbol_embedding_indexer.index(proj)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
