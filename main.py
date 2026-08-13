@@ -18,7 +18,7 @@ from agent.index import SemanticIndexService
 from agent.models import PatchResult, ProjectOverview, UserStory
 from agent.orchestrator import AgentOrchestrator
 from agent.paths import resolve_within
-from agent.patch import PatchApplierService
+from agent.patch import PatchApplierService, StalePatchError
 from agent.runner import TestRunner
 from agent.stories import StoryFileReader
 
@@ -299,6 +299,8 @@ def accept_plan(project_id: str):
     try:
         diff = orchestrator.accept_plan(project_id)
         return {"status": "accepted", "git_diff": diff}
+    except StalePatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
