@@ -82,7 +82,6 @@ class OpenAiConfig(BaseModel):  # kept for backward-compat, unused when Bedrock 
 
 class DatabaseConfig(BaseModel):
     url: SecretStr = SecretStr("")
-    embedding_dimensions: int = 1024
 
 
 class Settings(BaseModel):
@@ -139,13 +138,8 @@ class Settings(BaseModel):
         )
 
         db_data: dict = dict(data.get("database", {}))
-        db_url = os.getenv("AGENT_DATABASE_URL") or str(db_data.get("url", "") or "")
-        database_cfg = DatabaseConfig(
-            url=SecretStr(db_url),
-            embedding_dimensions=int(
-                os.getenv("AGENT_EMBEDDING_DIMENSIONS") or db_data.get("embedding_dimensions", 1024)
-            ),
-        )
+        db_url = os.getenv("DATABASE_URL") or str(db_data.get("url", "") or "")
+        database_cfg = DatabaseConfig(url=SecretStr(db_url))
 
         return cls(
             ai_provider=provider,

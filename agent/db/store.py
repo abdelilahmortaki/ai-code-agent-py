@@ -36,9 +36,8 @@ def _vector_to_list(value: Any) -> list[float]:
 class PgStore:
     """Minimal PostgreSQL persistence layer for the indexed code base."""
 
-    def __init__(self, url: str, embedding_dimensions: int = 1024) -> None:
+    def __init__(self, url: str) -> None:
         self._url = url
-        self.embedding_dimensions = embedding_dimensions
 
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._url, row_factory=dict_row)
@@ -229,15 +228,25 @@ class PgStore:
         new_version_id: str,
         old_version_id: str,
         paths: Sequence[str],
+        provider: str,
+        deployment_or_model: str,
+        dimensions: int | None = None,
     ) -> dict:
         """Copy symbols + embeddings of unchanged files into a new version.
 
-        Runs in a single transaction. Only files whose path exists in both
-        versions AND whose stored file_hash matches (hash double-check) are
-        copied. Symbol rows are recreated with fresh ids; embeddings are
-        copied with an exact-content symbol remap (module, owner, symbol_type,
-        name, signature, start_line, end_line, source) so every new symbol
-        receives the embedding that belonged to its old twin.
+        Runs in a single transaction. A file is only copied when ALL of the
+        following hold:
+
+        - its path exists in both versions AND the stored file_hash matches;
+        - every old symbol of the file has an embedding row (complete set);
+        - every old embedding of the file carries the same provider,
+          deployment_or_model and (when known) dimensions as the current run.
+
+        If any provenance requirement fails, the file is not copied and the
+        caller re-parses/re-embeds it. Symbol rows are recreated with fresh
+        ids; embeddings are copied with an exact-content symbol remap
+        (module, package_name, owner, symbol_type, name, qualified_name,
+        signature, start_line, end_line, source).
 
         Returns {"paths", "symbols_copied", "embeddings_copied",
         "symbols_by_path"} where symbols_by_path maps each copied path to the
@@ -247,11 +256,11 @@ class PgStore:
             return {"paths": [], "symbols_copied": 0, "embeddings_copied": 0, "symbols_by_path": {}}
         symbol_sql = (
             "INSERT INTO code_symbols "
-            "(id, project_version_id, file_id, module, owner, symbol_type, name, "
-            "signature, start_line, end_line, source) "
-            "SELECT gen_random_uuid(), %s, new_files.id, old_s.module, old_s.owner, "
-            "old_s.symbol_type, old_s.name, old_s.signature, old_s.start_line, "
-            "old_s.end_line, old_s.source "
+            "(id, project_version_id, file_id, module, package_name, owner, symbol_type, "
+            "name, qualified_name, signature, start_line, end_line, source) "
+            "SELECT gen_random_uuid(), %s, new_files.id, old_s.module, old_s.package_name, "
+            "old_s.owner, old_s.symbol_type, old_s.name, old_s.qualified_name, "
+            "old_s.signature, old_s.start_line, old_s.end_line, old_s.source "
             "FROM code_symbols old_s "
             "JOIN code_files old_files ON old_files.id = old_s.file_id "
             "AND old_files.project_version_id = %s "
@@ -260,13 +269,26 @@ class PgStore:
             "AND new_files.file_hash = old_files.file_hash "
             "AND new_files.path = ANY(%s) "
             "WHERE old_s.project_version_id = %s "
+            "AND old_s.id IN ("
+            "  SELECT se3.symbol_id FROM symbol_embeddings se3 "
+            "  WHERE se3.provider = %s AND se3.deployment_or_model = %s "
+            "  AND (%s::int IS NULL OR se3.dimensions = %s)"
+            ") "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM code_symbols missing "
+            "  WHERE missing.project_version_id = %s AND missing.file_id = old_files.id "
+            "  AND NOT EXISTS ("
+            "    SELECT 1 FROM symbol_embeddings e WHERE e.symbol_id = missing.id"
+            "  )"
+            ") "
             "RETURNING id AS new_symbol_id, file_id AS new_file_id"
         )
         embedding_sql = (
             "INSERT INTO symbol_embeddings "
-            "(id, project_version_id, symbol_id, embedding, provider, model) "
+            "(id, project_version_id, symbol_id, embedding, provider, "
+            "deployment_or_model, dimensions) "
             "SELECT gen_random_uuid(), %s, new_s.id, old_se.embedding, "
-            "old_se.provider, old_se.model "
+            "old_se.provider, old_se.deployment_or_model, old_se.dimensions "
             "FROM symbol_embeddings old_se "
             "JOIN code_symbols old_s ON old_s.id = old_se.symbol_id "
             "AND old_s.project_version_id = %s "
@@ -277,9 +299,11 @@ class PgStore:
             "JOIN code_symbols new_s ON new_s.project_version_id = %s "
             "AND new_s.file_id = new_files.id "
             "AND new_s.module = old_s.module "
+            "AND new_s.package_name = old_s.package_name "
             "AND new_s.owner = old_s.owner "
             "AND new_s.symbol_type = old_s.symbol_type "
             "AND new_s.name = old_s.name "
+            "AND new_s.qualified_name = old_s.qualified_name "
             "AND new_s.signature = old_s.signature "
             "AND new_s.start_line = old_s.start_line "
             "AND new_s.end_line = old_s.end_line "
@@ -291,6 +315,11 @@ class PgStore:
             old_version_id,
             new_version_id,
             list(paths),
+            old_version_id,
+            provider,
+            deployment_or_model,
+            dimensions,
+            dimensions,
             old_version_id,
         )
         embedding_params = (
@@ -341,7 +370,9 @@ class PgStore:
         symbol_type: str,
         file_id: str | None = None,
         module: str = "",
+        package_name: str = "",
         owner: str = "",
+        qualified_name: str = "",
         signature: str = "",
         start_line: int = 0,
         end_line: int = 0,
@@ -351,11 +382,12 @@ class PgStore:
             raise ValueError("name must be non-empty")
         sql = (
             "INSERT INTO code_symbols "
-            "(id, project_version_id, file_id, module, owner, symbol_type, name, "
-            "signature, start_line, end_line, source) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-            "RETURNING id, project_version_id, file_id, module, owner, symbol_type, "
-            "name, signature, start_line, end_line, source, created_at"
+            "(id, project_version_id, file_id, module, package_name, owner, "
+            "symbol_type, name, qualified_name, signature, start_line, end_line, source) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "RETURNING id, project_version_id, file_id, module, package_name, owner, "
+            "symbol_type, name, qualified_name, signature, start_line, end_line, "
+            "source, created_at"
         )
         try:
             with self._connect() as conn:
@@ -367,9 +399,11 @@ class PgStore:
                             project_version_id,
                             file_id,
                             module,
+                            package_name,
                             owner,
                             symbol_type,
                             name,
+                            qualified_name,
                             signature,
                             start_line,
                             end_line,
@@ -412,25 +446,42 @@ class PgStore:
         project_version_id: str,
         symbol_id: str,
         embedding: Sequence[float],
-        provider: str = "",
-        model: str = "",
+        provider: str,
+        deployment_or_model: str,
     ) -> dict:
+        if not provider or not deployment_or_model:
+            raise ValueError("provider and deployment_or_model must be non-empty")
         vector = [float(x) for x in embedding]
-        if len(vector) != self.embedding_dimensions:
-            raise ValueError(
-                f"embedding must have exactly {self.embedding_dimensions} dimensions, got {len(vector)}"
-            )
+        if not vector:
+            raise ValueError("embedding must not be empty")
+        if not all(x == x and x not in (float("inf"), float("-inf")) for x in vector):
+            raise ValueError("embedding must contain only finite numbers")
+        dimensions = len(vector)
         sql = (
-            "INSERT INTO symbol_embeddings (id, project_version_id, symbol_id, embedding, provider, model) "
-            "VALUES (%s, %s, %s, %s::vector, %s, %s) "
+            "INSERT INTO symbol_embeddings (id, project_version_id, symbol_id, embedding, "
+            "provider, deployment_or_model, dimensions) "
+            "VALUES (%s, %s, %s, %s::vector, %s, %s, %s) "
             "ON CONFLICT (symbol_id) DO UPDATE SET embedding = EXCLUDED.embedding, "
-            "provider = EXCLUDED.provider, model = EXCLUDED.model "
-            "RETURNING id, project_version_id, symbol_id, embedding, provider, model, created_at"
+            "provider = EXCLUDED.provider, deployment_or_model = EXCLUDED.deployment_or_model, "
+            "dimensions = EXCLUDED.dimensions "
+            "RETURNING id, project_version_id, symbol_id, embedding, provider, "
+            "deployment_or_model, dimensions, created_at"
         )
         try:
             with self._connect() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(sql, (self._new_id(), project_version_id, symbol_id, str(vector), provider, model))
+                    cur.execute(
+                        sql,
+                        (
+                            self._new_id(),
+                            project_version_id,
+                            symbol_id,
+                            str(vector),
+                            provider,
+                            deployment_or_model,
+                            dimensions,
+                        ),
+                    )
                     row = dict(cur.fetchone())
                     row["embedding"] = _vector_to_list(row["embedding"])
                     return row
@@ -440,30 +491,40 @@ class PgStore:
     def search_similar(
         self,
         embedding: Sequence[float],
+        provider: str,
+        deployment_or_model: str,
         top_k: int = 5,
         file_id: str | None = None,
         project_version_id: str | None = None,
     ) -> list[dict]:
         if top_k <= 0:
             raise ValueError("top_k must be positive")
+        if not provider or not deployment_or_model:
+            raise ValueError("provider and deployment_or_model must be non-empty")
         vector = [float(x) for x in embedding]
-        if len(vector) != self.embedding_dimensions:
-            raise ValueError(
-                f"embedding must have exactly {self.embedding_dimensions} dimensions, got {len(vector)}"
-            )
+        if not vector:
+            raise ValueError("embedding must not be empty")
+        dimensions = len(vector)
         sql = (
             "SELECT s.id, s.project_version_id, s.file_id, s.module, s.owner, "
             "s.symbol_type, s.name, s.signature, s.start_line, s.end_line, "
-            "se.embedding, se.embedding <=> %s::vector AS distance "
+            "se.embedding, se.provider, se.deployment_or_model, se.dimensions, "
+            "se.embedding <=> %s::vector AS distance "
             "FROM symbol_embeddings se "
             "JOIN code_symbols s ON s.id = se.symbol_id "
-            "WHERE (%s::uuid IS NULL OR s.file_id = %s::uuid) "
+            "WHERE se.provider = %s "
+            "AND se.deployment_or_model = %s "
+            "AND se.dimensions = %s "
+            "AND (%s::uuid IS NULL OR s.file_id = %s::uuid) "
             "AND (%s::uuid IS NULL OR s.project_version_id = %s::uuid) "
             "ORDER BY se.embedding <=> %s::vector "
             "LIMIT %s"
         )
         params: tuple = (
             str(vector),
+            provider,
+            deployment_or_model,
+            dimensions,
             file_id,
             file_id,
             project_version_id,
