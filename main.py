@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from agent.analysis import StaticAnalysisService
 from agent.codebase import CodebaseService
 from agent.config import Settings, ProjectConfig
-from agent.factory import create_provider_runtime
+from agent.factory import create_database_store, create_provider_runtime
 from agent.git_service import GitDiffService
 from agent.guard import PatchGuardService, PromptGuardService
 from agent.index import SemanticIndexService
@@ -76,6 +76,7 @@ git_diff        = GitDiffService()
 static_analysis = StaticAnalysisService(codebase)
 test_runner     = TestRunner()
 story_reader    = StoryFileReader()
+db_store        = create_database_store(settings)
 
 orchestrator = AgentOrchestrator(
     config=settings.agent,
@@ -88,6 +89,7 @@ orchestrator = AgentOrchestrator(
     test_runner=test_runner,
     story_reader=story_reader,
     prompt_guard=prompt_guard,
+    store=db_store,
 )
 
 # Active SSE log queues — keyed by client-generated run_id (UUID)
