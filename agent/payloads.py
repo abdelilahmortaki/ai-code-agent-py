@@ -239,7 +239,7 @@ def _dependencies(
     except SymbolParseError:
         pass
 
-    owner = owner_map.get(_dotted_path(symbol.module, symbol.owner or symbol.name, ""))
+    owner = owner_map.get(_dotted_path(symbol.package_name, symbol.owner or symbol.name, ""))
     if owner is not None:
         try:
             deps.update(_field_types(owner.source))
