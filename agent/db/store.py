@@ -780,8 +780,9 @@ class PgStore:
     def list_symbols(self, project_version_id: str) -> list[dict]:
         """Return every code_symbols row of a version joined with its file path."""
         sql = (
-            "SELECT s.id, s.file_id, f.path, s.module, s.owner, s.symbol_type, "
-            "s.name, s.signature, s.start_line, s.end_line, s.source "
+            "SELECT s.id, s.file_id, f.path, s.module, s.package_name, s.owner, "
+            "s.symbol_type, s.name, s.qualified_name, s.signature, s.start_line, "
+            "s.end_line, s.source "
             "FROM code_symbols s "
             "JOIN code_files f ON f.id = s.file_id "
             "WHERE s.project_version_id = %s "
@@ -795,20 +796,21 @@ class PgStore:
         except psycopg.Error as exc:
             raise PgStoreError("failed to list code symbols") from exc
 
-    def insert_edges(
+    def replace_edges(
         self,
         project_version_id: str,
         edges: Sequence[tuple[str, str, str]],
     ) -> int:
-        """Insert code_edges rows (source_symbol_id, target_symbol_id,
-        relation_type) inside one transaction.
+        """Atomically replace every code_edges row of a version with a new set.
 
-        Each row gets a fresh id; an empty ``edges`` sequence is a no-op
-        returning 0.
+        Runs in ONE transaction: all existing edges of the version are
+        deleted, then the new edge set is inserted, then the transaction
+        commits. If the insert fails the transaction rolls back and the old
+        graph remains intact. Each row gets a fresh id; an empty ``edges``
+        sequence deletes all edges for the version and inserts nothing.
         """
-        if not edges:
-            return 0
-        sql = (
+        delete_sql = "DELETE FROM code_edges WHERE project_version_id = %s"
+        insert_sql = (
             "INSERT INTO code_edges (id, project_version_id, source_symbol_id, "
             "target_symbol_id, relation_type) VALUES (%s, %s, %s, %s, %s)"
         )
@@ -819,10 +821,14 @@ class PgStore:
         try:
             with self.transaction() as conn:
                 with conn.cursor() as cur:
-                    cur.executemany(sql, params)
-                    return cur.rowcount
+                    cur.execute(delete_sql, (project_version_id,))
+                    deleted = cur.rowcount
+                    if params:
+                        cur.executemany(insert_sql, params)
+                    inserted = cur.rowcount if params else 0
+                    return inserted
         except psycopg.Error as exc:
-            raise PgStoreError("failed to insert code edges") from exc
+            raise PgStoreError("failed to replace code edges") from exc
 
     def delete_edges(self, project_version_id: str) -> int:
         """Delete every code_edges row of a version; returns the deleted count."""

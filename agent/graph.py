@@ -162,7 +162,9 @@ def _tokens(text: str) -> list[_Token]:
 def _single_type_imports(text: str) -> list[tuple[str, str]]:
     """Return [(simple_name, full_dotted_path)] for single-type imports.
 
-    ``import static`` and wildcard imports are skipped.
+    ``import static`` and wildcard imports (``import a.b.*;``) are skipped
+    and never create a graph target; only the final simple segment of each
+    single-type import is kept.
     """
     tokens = _tokens(text)
     result: list[tuple[str, str]] = []
@@ -177,13 +179,16 @@ def _single_type_imports(text: str) -> list[tuple[str, str]]:
                 i = j + 1
                 continue
             parts: list[str] = []
+            wildcard = False
             while j < n and tokens[j].value != ";":
                 if tokens[j].kind == "ident":
                     parts.append(tokens[j].value)
+                elif tokens[j].value == "*":
+                    wildcard = True
                 elif tokens[j].value != ".":
                     break
                 j += 1
-            if parts and parts[-1] != "*":
+            if not wildcard and parts:
                 result.append((parts[-1], ".".join(parts)))
             i = j + 1
         else:
@@ -531,22 +536,32 @@ class CodeGraphBuilder:
             by_path.setdefault(symbol["path"], []).append(symbol)
 
         full_path_index: dict[str, dict] = {}
+        owner_index: dict[str, list[dict]] = {}
         simple_index: dict[str, list[dict]] = {}
         for symbol in symbols:
             simple_index.setdefault(symbol["name"], []).append(symbol)
             key = _type_qual(symbol)
-            if symbol.get("module"):
-                full_path_index.setdefault(f"{symbol['module']}.{key}", symbol)
-            full_path_index.setdefault(key, symbol)
+            if symbol.get("qualified_name"):
+                full_path_index.setdefault(symbol["qualified_name"], symbol)
+            owner_index.setdefault(key, []).append(symbol)
 
-        def resolve(name: str, module: str, path: str) -> dict | None:
+        def resolve(name: str, module: str, package_name: str, path: str) -> dict | None:
+            """Resolve a type reference to a symbol.
+
+            The Java namespace (qualified_name / owner.name / package_name) is
+            authoritative; the Maven module is only a disambiguation signal.
+            """
             if "." in name:
                 candidate = full_path_index.get(name)
                 if candidate is not None:
                     return candidate
-                candidate = full_path_index.get(f"{module}.{name}")
-                if candidate is not None:
-                    return candidate
+                candidates = [
+                    c
+                    for c in owner_index.get(name, [])
+                    if c["symbol_type"] in _TYPE_KINDS
+                ]
+                if len(candidates) == 1:
+                    return candidates[0]
                 return None
             candidates = [
                 c for c in simple_index.get(name, []) if c["symbol_type"] in _TYPE_KINDS
@@ -556,7 +571,14 @@ class CodeGraphBuilder:
                 if len(tier_same_file) == 1:
                     return tier_same_file[0]
                 return None
-            tier_same_module = [c for c in candidates if c["module"] == module]
+            tier_same_package = [
+                c for c in candidates if c.get("package_name") == package_name
+            ]
+            if tier_same_package:
+                if len(tier_same_package) == 1:
+                    return tier_same_package[0]
+                return None
+            tier_same_module = [c for c in candidates if c.get("module") == module]
             if tier_same_module:
                 if len(tier_same_module) == 1:
                     return tier_same_module[0]
@@ -586,15 +608,23 @@ class CodeGraphBuilder:
                 (s["module"] for s in file_symbols if s["symbol_type"] in _TYPE_KINDS and s["module"]),
                 "",
             ) or (file_symbols[0]["module"] if file_symbols else "")
+            package_name = next(
+                (
+                    s["package_name"]
+                    for s in file_symbols
+                    if s["symbol_type"] in _TYPE_KINDS and s.get("package_name")
+                ),
+                "",
+            ) or (file_symbols[0].get("package_name", "") if file_symbols else "")
 
             imports = _single_type_imports(text)
             type_symbols = [s for s in file_symbols if s["symbol_type"] in _TYPE_KINDS]
 
             for type_symbol in type_symbols:
                 for simple, full in imports:
-                    target = resolve(full, module, path)
+                    target = resolve(full, module, package_name, path)
                     if target is None and full != simple:
-                        target = resolve(simple, module, path)
+                        target = resolve(simple, module, package_name, path)
                     if target is None:
                         unresolved += 1
                         continue
@@ -602,13 +632,13 @@ class CodeGraphBuilder:
 
             for type_symbol in type_symbols:
                 for name in _header_types(type_symbol["signature"], "extends"):
-                    target = resolve(name, type_symbol["module"], path)
+                    target = resolve(name, type_symbol["module"], type_symbol["package_name"], path)
                     if target is None:
                         unresolved += 1
                         continue
                     edges.add((type_symbol["id"], target["id"], INHERITS))
                 for name in _header_types(type_symbol["signature"], "implements"):
-                    target = resolve(name, type_symbol["module"], path)
+                    target = resolve(name, type_symbol["module"], type_symbol["package_name"], path)
                     if target is None:
                         unresolved += 1
                         continue
@@ -646,7 +676,7 @@ class CodeGraphBuilder:
                     if not type_name:
                         unresolved += 1
                         continue
-                    target_type = resolve(type_name, method["module"], path)
+                    target_type = resolve(type_name, method["module"], package_name, path)
                     if target_type is None:
                         unresolved += 1
                         continue
@@ -656,7 +686,7 @@ class CodeGraphBuilder:
                             for s in symbols
                             if s["symbol_type"] == "constructor"
                             and s["name"] == target_type["name"]
-                            and s["module"] == target_type["module"]
+                            and s["package_name"] == target_type.get("package_name")
                             and s["owner"] == _type_qual(target_type)
                         ]
                     else:
@@ -665,7 +695,7 @@ class CodeGraphBuilder:
                             for s in symbols
                             if s["symbol_type"] == "method"
                             and s["name"] == call["method"]
-                            and s["module"] == target_type["module"]
+                            and s["package_name"] == target_type.get("package_name")
                             and s["owner"] == _type_qual(target_type)
                         ]
                     exact_arity = [
@@ -698,7 +728,7 @@ class CodeGraphBuilder:
                 )
                 referenced.discard(type_symbol["name"])
                 for name in sorted(referenced):
-                    target = resolve(name, module, path)
+                    target = resolve(name, module, package_name, path)
                     if target is None:
                         continue
                     target_path = target.get("path", "")
@@ -710,8 +740,7 @@ class CodeGraphBuilder:
                     edges.add((target["id"], type_symbol["id"], TESTED_BY))
 
         sorted_edges = sorted(edges)
-        previous_deleted = self.store.delete_edges(project_version_id)
-        inserted = self.store.insert_edges(project_version_id, sorted_edges)
+        inserted = self.store.replace_edges(project_version_id, sorted_edges)
 
         edges_by_type = {
             relation: sum(1 for _, _, rel in sorted_edges if rel == relation)
@@ -725,7 +754,6 @@ class CodeGraphBuilder:
             "edges_inserted": inserted,
             "edges_by_type": edges_by_type,
             "unresolved_skipped": unresolved,
-            "previous_edges_deleted": previous_deleted,
         }
 
 
