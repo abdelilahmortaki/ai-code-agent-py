@@ -535,14 +535,14 @@ class CodeGraphBuilder:
         for symbol in symbols:
             by_path.setdefault(symbol["path"], []).append(symbol)
 
-        full_path_index: dict[str, dict] = {}
+        full_path_index: dict[str, list[dict]] = {}
         owner_index: dict[str, list[dict]] = {}
         simple_index: dict[str, list[dict]] = {}
         for symbol in symbols:
             simple_index.setdefault(symbol["name"], []).append(symbol)
             key = _type_qual(symbol)
             if symbol.get("qualified_name"):
-                full_path_index.setdefault(symbol["qualified_name"], symbol)
+                full_path_index.setdefault(symbol["qualified_name"], []).append(symbol)
             owner_index.setdefault(key, []).append(symbol)
 
         def resolve(name: str, module: str, package_name: str, path: str) -> dict | None:
@@ -550,11 +550,23 @@ class CodeGraphBuilder:
 
             The Java namespace (qualified_name / owner.name / package_name) is
             authoritative; the Maven module is only a disambiguation signal.
+            Duplicate qualified names across modules are resolved to the
+            symbol in the current module when unambiguous, otherwise they are
+            ambiguous and resolve to None (never an arbitrary pick).
             """
             if "." in name:
-                candidate = full_path_index.get(name)
-                if candidate is not None:
-                    return candidate
+                candidates = [
+                    c
+                    for c in full_path_index.get(name, [])
+                    if c["symbol_type"] in _TYPE_KINDS
+                ]
+                if len(candidates) == 1:
+                    return candidates[0]
+                if len(candidates) > 1:
+                    in_module = [c for c in candidates if c.get("module") == module]
+                    if len(in_module) == 1:
+                        return in_module[0]
+                    return None
                 candidates = [
                     c
                     for c in owner_index.get(name, [])
@@ -621,10 +633,12 @@ class CodeGraphBuilder:
             type_symbols = [s for s in file_symbols if s["symbol_type"] in _TYPE_KINDS]
 
             for type_symbol in type_symbols:
-                for simple, full in imports:
+                for _, full in imports:
+                    # Explicit single-type imports are authoritative FQNs:
+                    # no fallback to the simple name, so an import of an
+                    # external type can never fabricate an edge to a project
+                    # type that merely shares the simple name.
                     target = resolve(full, module, package_name, path)
-                    if target is None and full != simple:
-                        target = resolve(simple, module, package_name, path)
                     if target is None:
                         unresolved += 1
                         continue
@@ -768,33 +782,54 @@ def main(argv: list[str] | None = None) -> int:
         prog="python -m agent.graph",
         description="Build the deterministic code graph (code_edges) of a project version.",
     )
-    parser.add_argument("--repo-root", required=True, help="Absolute path of the project")
+    parser.add_argument(
+        "--repo-root",
+        default="",
+        help="Absolute path of the project (its resolved path is the external "
+        "id); not needed when --project-id is used",
+    )
+    parser.add_argument(
+        "--project-id",
+        default="",
+        help="Runtime project id (external_id, e.g. upload-123); takes "
+        "precedence over the repo-root lookup",
+    )
     parser.add_argument("--name", default="", help="Project name fallback for lookup")
     parser.add_argument("--version", type=int, default=None, help="Version number (default: latest)")
     parser.add_argument(
         "--url",
         default=None,
-        help="Database URL (overrides AGENT_DATABASE_URL and config.yml database.url)",
+        help="Database URL (overrides DATABASE_URL)",
     )
     args = parser.parse_args(argv)
+
+    if not args.project_id and not args.repo_root:
+        parser.error("either --project-id or --repo-root is required")
 
     dsn = _database_url(args.url)
     if not dsn:
         print(
-            "No database URL configured: pass --url, set AGENT_DATABASE_URL, "
-            "or set database.url in config.yml",
+            "No database URL configured: pass --url or set DATABASE_URL",
             file=sys.stderr,
         )
         return 1
 
     try:
         store = PgStore(dsn)
-        root = Path(args.repo_root).resolve()
-        project_row = store.find_project_by_external_id(str(root))
+        root = Path(args.repo_root).resolve() if args.repo_root else Path(".")
+        project_row = None
+        if args.project_id:
+            project_row = store.find_project_by_external_id(args.project_id)
+        if project_row is None and args.repo_root:
+            project_row = store.find_project_by_external_id(str(root))
         if project_row is None and args.name:
             project_row = store.find_project_by_name(args.name)
         if project_row is None:
-            print(f"Project not found for repo root: {root}", file=sys.stderr)
+            print(
+                f"Project not found (project-id: {args.project_id or '-'}, "
+                f"repo root: {args.repo_root or '-'})",
+                file=sys.stderr,
+            )
             return 1
         if args.version is not None:
             version = store.find_version_by_number(project_row["id"], args.version)
