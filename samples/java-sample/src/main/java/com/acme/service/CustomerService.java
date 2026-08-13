@@ -2,17 +2,21 @@ package com.acme.service;
 
 import java.util.List;
 
+import com.acme.repo.CustomerRepository;
+
 /**
  * Sample service that exercises the Java symbol parser:
  * constructors, an overridden method whose body contains a string
  * literal with braces, a char literal, a lambda, an anonymous class,
  * a block comment with braces, plus nested types.
  */
-public class CustomerService implements Validator {
+public class CustomerService extends BaseService implements Validator {
 
     private final List<String> notes = List.of("a", "b");
 
     private String name = "";
+
+    private CustomerRepository repository;
 
     public CustomerService() {
         super();
@@ -20,6 +24,17 @@ public class CustomerService implements Validator {
 
     public CustomerService(String name) {
         this.name = name;
+    }
+
+    public CustomerService(CustomerRepository repository) {
+        this.repository = repository;
+    }
+
+    public String findCustomer(String id) {
+        if (repository == null) {
+            return "";
+        }
+        return repository.findById(id);
     }
 
     @Override
