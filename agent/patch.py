@@ -23,7 +23,11 @@ class PatchApplierService:
         for patch in plan.files:
             if patch.operation.lower() in {"modify", "delete"} and patch.base_file_hash:
                 target = resolve_within(root, patch.path)
-                if hashlib.sha256(target.read_bytes()).hexdigest() != patch.base_file_hash:
+                try:
+                    current_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+                except OSError:
+                    raise StalePatchError(STALE_PATCH)
+                if current_hash != patch.base_file_hash:
                     raise StalePatchError(STALE_PATCH)
         touched = []
         for patch in plan.files:
