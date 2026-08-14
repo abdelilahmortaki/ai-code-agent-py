@@ -11,17 +11,19 @@ from pydantic import BaseModel, field_validator
 from agent.analysis import StaticAnalysisService
 from agent.codebase import CodebaseService
 from agent.config import Settings, ProjectConfig
+from agent.context import ContextBuilder
 from agent.factory import create_database_store, create_provider_runtime
 from agent.git_service import GitDiffService
 from agent.graph import GraphExpansionService
 from agent.guard import PatchGuardService, PromptGuardService
 from agent.index import SemanticIndexService
 from agent.indexer import SymbolEmbeddingIndexer
-from agent.models import PatchResult, ProjectOverview, UserStory
+from agent.models import ContextBundle, PatchResult, ProjectOverview, UserStory
 from agent.orchestrator import AgentOrchestrator
 from agent.paths import resolve_within
 from agent.patch import PatchApplierService, StalePatchError
 from agent.priority import normalize_priority
+from agent.retrieval import HybridRetrievalService
 from agent.runner import TestRunner
 from agent.search import LexicalSearchService
 from agent.stories import StoryFileReader
@@ -85,6 +87,16 @@ db_store        = create_database_store(settings)
 version_indexer = VersionIndexer(codebase, db_store)
 symbol_embedding_indexer = SymbolEmbeddingIndexer(codebase, db_store, provider_runtime.embedding)
 
+# Hybrid (F2) retrieval + explainable context builder. Both are optional:
+# when the PostgreSQL hybrid index is genuinely unavailable the orchestrator
+# falls back to the legacy SemanticIndexService path.
+hybrid_retrieval = (
+    HybridRetrievalService(db_store, provider_runtime.embedding)
+    if db_store is not None
+    else None
+)
+context_builder = ContextBuilder(codebase)
+
 orchestrator = AgentOrchestrator(
     config=settings.agent,
     codebase=codebase,
@@ -97,6 +109,8 @@ orchestrator = AgentOrchestrator(
     story_reader=story_reader,
     prompt_guard=prompt_guard,
     store=db_store,
+    hybrid_retrieval=hybrid_retrieval,
+    context_builder=context_builder,
 )
 
 # Active SSE log queues — keyed by client-generated run_id (UUID)
@@ -164,6 +178,34 @@ def index_symbols_pg(project_id: str, incremental: bool = Query(default=False)):
     if incremental:
         return symbol_embedding_indexer.index_incremental(proj)
     return symbol_embedding_indexer.index(proj)
+
+
+@app.get("/api/agent/{project_id}/index/status")
+def index_status(project_id: str):
+    """Report index availability for the UI (legacy JSON + PostgreSQL hybrid).
+
+    The UI uses this to show actual counts from the backend and to clearly
+    say hybrid is unavailable when the database is not configured.
+    """
+    try:
+        proj = orchestrator.config.project_by_id(project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    legacy = {"available": semantic_index.exists(proj)}
+    if hybrid_retrieval is not None:
+        hybrid = hybrid_retrieval.hybrid_index_status(project_id)
+    else:
+        hybrid = {
+            "available": False,
+            "reason": "database not configured",
+            "project_version_id": None,
+            "version_number": None,
+        }
+    return {
+        "database_configured": db_store is not None,
+        "legacy": legacy,
+        "hybrid": hybrid,
+    }
 
 
 @app.get("/api/agent/{project_id}/search")
@@ -241,6 +283,76 @@ def generate_patch(project_id: str, story_id: str):
         raise _generation_http_exception(exc) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Generation failed") from exc
+
+
+# ---------------------------------------------------------------------------
+# Read-only context preview (#21) — hybrid retrieval + Context Builder only.
+# NO LLM generation, NO pending patch, NO source modification.
+# ---------------------------------------------------------------------------
+
+class ContextPreviewRequest(BaseModel):
+    title: str
+    description: str
+    acceptanceCriteria: list[str] = []
+    priority: str = "P3"
+    graph_depth: int = 1
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _normalize_priority(cls, v: object) -> str:
+        return normalize_priority(v)
+
+    @field_validator("graph_depth")
+    @classmethod
+    def _validate_graph_depth(cls, v: int) -> int:
+        if v not in (0, 1):
+            raise ValueError("graph_depth must be 0 or 1")
+        return v
+
+
+@app.post("/api/agent/{project_id}/context-preview", response_model=ContextBundle)
+def context_preview(project_id: str, request: ContextPreviewRequest):
+    if hybrid_retrieval is None or context_builder is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Hybrid index unavailable — database is not configured",
+        )
+    status = hybrid_retrieval.hybrid_index_status(project_id)
+    if not status.get("available"):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Hybrid index unavailable for this project "
+                f"({status.get('reason')}) — rebuild the index "
+                "(Rebuild Index prepares the PostgreSQL hybrid index) to enable "
+                "hybrid context"
+            ),
+        )
+    try:
+        project = orchestrator.config.project_by_id(project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    query_text = "\n".join(
+        part
+        for part in [request.title, request.description, *request.acceptanceCriteria]
+        if part and part.strip()
+    )
+    if not query_text:
+        raise HTTPException(status_code=400, detail="title and description are required")
+    result = hybrid_retrieval.retrieve(
+        project_id,
+        query_text,
+        top_k=orchestrator.config.hybrid_retrieval_top_k,
+        graph_depth=request.graph_depth,
+        max_related=orchestrator.config.hybrid_max_related,
+    )
+    return context_builder.build(
+        project=project,
+        query=query_text,
+        retrieval=result,
+        estimated_token_budget=orchestrator.config.hybrid_context_budget,
+        max_context_files=orchestrator.config.max_context_files,
+    )
 
 
 # ---------------------------------------------------------------------------
