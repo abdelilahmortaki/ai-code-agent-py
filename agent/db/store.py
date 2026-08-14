@@ -794,6 +794,179 @@ class PgStore:
         except psycopg.Error as exc:
             raise PgStoreError("failed to list code symbols") from exc
 
+    def find_symbols_by_qualified_name(
+        self, project_version_id: str, qualified_name: str
+    ) -> list[dict]:
+        """Return every symbol of a version whose qualified name matches.
+
+        A seed name is matched against the persisted ``qualified_name`` (e.g.
+        ``com.acme.service.CustomerService`` or
+        ``com.acme.service.CustomerService.findCustomer``) or the
+        ``owner.name`` shorthand. Returns the symbol rows joined with their
+        file path, deterministically ordered by ``start_line`` then ``id``.
+        """
+        sql = (
+            "SELECT s.id, s.file_id, f.path, s.module, s.package_name, s.owner, "
+            "s.symbol_type, s.name, s.qualified_name, s.signature, s.start_line, "
+            "s.end_line "
+            "FROM code_symbols s "
+            "JOIN code_files f ON f.id = s.file_id "
+            "WHERE s.project_version_id = %s "
+            "AND (s.qualified_name = %s "
+            "OR concat_ws('.', NULLIF(s.owner, ''), s.name) = %s) "
+            "ORDER BY s.start_line, s.id"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql, (project_version_id, qualified_name, qualified_name)
+                    )
+                    return [dict(row) for row in cur.fetchall()]
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to look up symbols by qualified name") from exc
+
+    def expand_neighbors(
+        self,
+        project_version_id: str,
+        seed_symbol_ids: Sequence[str],
+        depth: int = 0,
+        max_related: int = 20,
+        relation_types: Sequence[str] | None = None,
+    ) -> dict:
+        """Walk code_edges up to depth 1 from a set of seed symbols (F2.3).
+
+        Depth 0 returns only the seed symbols. Depth 1 additionally returns
+        every direct neighbor symbol of a seed: outgoing targets (callees,
+        imported types, superclasses, tests) and incoming sources (callers,
+        importers, subclasses, implementors), optionally restricted to the
+        given ``relation_types``.
+
+        Neighbors are deduplicated by symbol id (a symbol reachable via
+        several edges appears once), each carrying the sorted
+        ``relations`` list of ``{"relation_type", "direction"}`` pairs that
+        connect it to a seed. The result is ordered deterministically by
+        ``name``, ``start_line``, ``id`` and capped at ``max_related`` related
+        symbols; ``capped`` is True only when the cap truncated the result.
+        Only parameterized SQL is used. ``depth`` must be 0 or 1 and
+        ``max_related`` a non-negative integer, otherwise ValueError.
+
+        Returns ``{"seeds": [...], "neighbors": [...], "depth": depth,
+        "capped": bool}``.
+        """
+        if depth not in (0, 1):
+            raise ValueError("depth must be 0 or 1")
+        if not isinstance(max_related, int) or max_related < 0:
+            raise ValueError("max_related must be a non-negative integer")
+        ids = [str(s) for s in seed_symbol_ids]
+        for symbol_id in ids:
+            try:
+                uuid.UUID(symbol_id)
+            except (ValueError, AttributeError, TypeError) as exc:
+                raise ValueError(
+                    f"seed symbol id must be a valid UUID: {symbol_id!r}"
+                ) from exc
+        relations = None
+        if relation_types:
+            relations = sorted({str(r) for r in relation_types if str(r)})
+
+        seed_sql = (
+            "SELECT s.id, s.file_id, f.path, s.module, s.package_name, s.owner, "
+            "s.symbol_type, s.name, s.qualified_name, s.signature, s.start_line, "
+            "s.end_line "
+            "FROM code_symbols s "
+            "JOIN code_files f ON f.id = s.file_id "
+            "WHERE s.project_version_id = %s AND s.id = ANY(%s::uuid[]) "
+            "ORDER BY s.start_line, s.id"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(seed_sql, (project_version_id, ids))
+                    seeds = [dict(row) for row in cur.fetchall()]
+                    if depth == 0:
+                        return {
+                            "seeds": seeds,
+                            "neighbors": [],
+                            "depth": 0,
+                            "capped": False,
+                        }
+                    neighbor_sql = (
+                        "WITH seeds AS ("
+                        "  SELECT s.id FROM code_symbols s "
+                        "  WHERE s.project_version_id = %s AND s.id = ANY(%s::uuid[])"
+                        "), "
+                        "out_edges AS ("
+                        "  SELECT e.target_symbol_id AS sid, e.relation_type AS rel "
+                        "  FROM code_edges e "
+                        "  WHERE e.project_version_id = %s "
+                        "  AND e.source_symbol_id = ANY(%s::uuid[]) "
+                        "  AND (%s::text[] IS NULL OR e.relation_type = ANY(%s::text[])) "
+                        "  AND NOT EXISTS (SELECT 1 FROM seeds s WHERE s.id = e.target_symbol_id)"
+                        "), "
+                        "in_edges AS ("
+                        "  SELECT e.source_symbol_id AS sid, e.relation_type AS rel "
+                        "  FROM code_edges e "
+                        "  WHERE e.project_version_id = %s "
+                        "  AND e.target_symbol_id = ANY(%s::uuid[]) "
+                        "  AND (%s::text[] IS NULL OR e.relation_type = ANY(%s::text[])) "
+                        "  AND NOT EXISTS (SELECT 1 FROM seeds s WHERE s.id = e.source_symbol_id)"
+                        "), "
+                        "neighbors AS ("
+                        "  SELECT sid, rel, 'outgoing' AS direction FROM out_edges "
+                        "  UNION ALL "
+                        "  SELECT sid, rel, 'incoming' AS direction FROM in_edges"
+                        "), "
+                        "grouped AS ("
+                        "  SELECT sid, array_agg(DISTINCT rel || ':' || direction) "
+                        "  AS relations FROM neighbors GROUP BY sid"
+                        ") "
+                        "SELECT s.id, s.file_id, f.path, s.module, s.package_name, s.owner, "
+                        "s.symbol_type, s.name, s.qualified_name, s.signature, s.start_line, "
+                        "s.end_line, g.relations "
+                        "FROM grouped g "
+                        "JOIN code_symbols s ON s.id = g.sid AND s.project_version_id = %s "
+                        "JOIN code_files f ON f.id = s.file_id "
+                        "ORDER BY s.name, s.start_line, s.id "
+                        "LIMIT %s"
+                    )
+                    cur.execute(
+                        neighbor_sql,
+                        (
+                            project_version_id,
+                            ids,
+                            project_version_id,
+                            ids,
+                            relations,
+                            relations,
+                            project_version_id,
+                            ids,
+                            relations,
+                            relations,
+                            project_version_id,
+                            max_related + 1,
+                        ),
+                    )
+                    rows = [dict(row) for row in cur.fetchall()]
+        except PgStoreError:
+            raise
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to expand graph neighbors") from exc
+        capped = len(rows) > max_related
+        neighbors = rows[:max_related]
+        for row in neighbors:
+            raw_relations = row.pop("relations") or []
+            row["relations"] = [
+                {"relation_type": entry.partition(":")[0], "direction": entry.partition(":")[2]}
+                for entry in sorted(raw_relations)
+            ]
+        return {
+            "seeds": seeds,
+            "neighbors": neighbors,
+            "depth": 1,
+            "capped": capped,
+        }
+
     def replace_edges(
         self,
         project_version_id: str,
