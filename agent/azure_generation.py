@@ -9,7 +9,7 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, 
 from agent.config import ProjectConfig
 from agent.guard import PromptGuardService
 from agent.models import ProposalFile, PatchProposalPlan, TestFailureContext, UserStory
-from agent.providers import NormalizedUsage
+from agent.providers import NormalizedUsage, ProviderCapabilities
 from agent.patch_schema import PATCH_PLAN_SCHEMA, PATCH_SCHEMA_HINT
 
 
@@ -117,12 +117,29 @@ class AzureOpenAIGenerationProvider:
         }
         return {key: int(value) for key, value in values.items() if value is not None}
 
+    @staticmethod
+    def count_tokens(text: str) -> None:
+        return None
+
+    @staticmethod
+    def capabilities() -> ProviderCapabilities:
+        return ProviderCapabilities(
+            exact_token_counting=False,
+            usage=True,
+            notes=(
+                "Azure OpenAI responses expose usage (input_tokens/output_tokens/total_tokens) "
+                "captured into last_usage after each generation. Exact token counting is "
+                "unsupported: the openai client does not expose a tokenizer and we do not bundle one.",
+            ),
+        )
+
     def _generate(
         self,
         story_id: str,
         prompt: str,
         log_callback: Callable[[str], None],
     ) -> PatchProposalPlan:
+        self.last_usage = None
         log_callback("Connecting to Azure OpenAI…")
         raw_text = ""
         response = None

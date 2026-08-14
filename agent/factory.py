@@ -6,7 +6,7 @@ from typing import Callable
 from agent.config import BedrockConfig, ProjectConfig, Settings
 from agent.guard import PromptGuardService
 from agent.models import PatchProposalPlan, TestFailureContext, UserStory
-from agent.providers import EmbeddingProvider, GenerationProvider
+from agent.providers import EmbeddingProvider, GenerationProvider, NormalizedUsage, ProviderCapabilities
 
 
 def _noop(msg: str) -> None:
@@ -52,6 +52,50 @@ class BedrockGenerationProvider:
         log_callback: Callable[[str], None] = _noop,
     ) -> PatchProposalPlan:
         return self._service.generate_fix_plan(ctx, log_callback)
+
+    @property
+    def last_usage(self) -> NormalizedUsage | None:
+        return self.normalize_usage(getattr(self._service, "last_usage", None))
+
+    @staticmethod
+    def normalize_usage(usage: object | None) -> NormalizedUsage | None:
+        if usage is None:
+            return None
+
+        def _pick(*names: str) -> object | None:
+            for name in names:
+                value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+                if value is not None:
+                    return value
+            return None
+
+        normalized: NormalizedUsage = {}
+        input_tokens = _pick("inputTokens", "input_tokens")
+        output_tokens = _pick("outputTokens", "output_tokens")
+        total_tokens = _pick("totalTokens", "total_tokens")
+        if input_tokens is not None:
+            normalized["input_tokens"] = int(input_tokens)
+        if output_tokens is not None:
+            normalized["output_tokens"] = int(output_tokens)
+        if total_tokens is not None:
+            normalized["total_tokens"] = int(total_tokens)
+        return normalized
+
+    @staticmethod
+    def count_tokens(text: str) -> None:
+        return None
+
+    @staticmethod
+    def capabilities() -> ProviderCapabilities:
+        return ProviderCapabilities(
+            exact_token_counting=False,
+            usage=True,
+            notes=(
+                "Bedrock ConverseStream reports usage (inputTokens/outputTokens/totalTokens), "
+                "captured into the service's last_usage after each generation. Exact token "
+                "counting is unsupported without a bundled tokenizer for the chosen model.",
+            ),
+        )
 
 
 def create_provider_runtime(settings: Settings, prompt_guard: PromptGuardService) -> ProviderRuntime:
