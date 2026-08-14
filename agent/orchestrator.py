@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import difflib
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from agent.config import AgentConfig
@@ -12,6 +13,7 @@ from agent.index import SemanticIndexService
 from agent.models import PatchPlan, PatchProposalPlan, PatchResult, ProjectOverview, TestFailureContext, UserStory
 from agent.materializer import PatchMaterializer
 from agent.guard import PromptGuardService
+from agent.paths import resolve_within
 from agent.patch import PatchApplierService
 from agent.providers import GenerationProvider
 from agent.runner import TestRunner
@@ -136,8 +138,10 @@ class AgentOrchestrator:
         """Compute a unified diff between current and proposed file contents
         without touching the filesystem."""
         output: list[str] = []
+        root = Path(project.repo_root).resolve()
         for pf in plan_files.files:
-            current = self.codebase.read_file(project, pf.path) or ""
+            target = resolve_within(root, pf.path)
+            current = target.read_bytes().decode("utf-8") if target.exists() else ""
             new_content = pf.content or ""
             old_lines = current.splitlines(keepends=True)
             new_lines = new_content.splitlines(keepends=True)

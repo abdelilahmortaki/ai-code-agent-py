@@ -37,11 +37,16 @@ class PatchMaterializer:
             if not edit.before:
                 raise ValueError(EDIT_ANCHOR_NOT_FOUND)
             start = current.find(edit.before)
+            replacement = edit.after
             if start < 0:
-                raise ValueError(EDIT_ANCHOR_NOT_FOUND)
-            if start != current.rfind(edit.before):
-                raise ValueError(EDIT_ANCHOR_AMBIGUOUS)
-            matches.append((start, start + len(edit.before), edit.after))
+                start, end, replacement = PatchMaterializer._find_eol_equivalent(
+                    current, edit.before, edit.after
+                )
+            else:
+                if start != current.rfind(edit.before):
+                    raise ValueError(EDIT_ANCHOR_AMBIGUOUS)
+                end = start + len(edit.before)
+            matches.append((start, end, replacement))
         matches.sort()
         if any(end > next_start for (_, end, _), (next_start, _, _) in zip(matches, matches[1:])):
             raise ValueError(EDIT_ANCHOR_OVERLAP)
@@ -49,3 +54,43 @@ class PatchMaterializer:
         for start, end, after in reversed(matches):
             output = output[:start] + after + output[end:]
         return output
+
+    @staticmethod
+    def _find_eol_equivalent(current: str, before: str, after: str) -> tuple[int, int, str]:
+        """Resolve an anchor differing from the source only by CRLF versus LF."""
+        normalized_current, boundaries = PatchMaterializer._normalize_newlines(current)
+        normalized_before = before.replace("\r\n", "\n")
+        positions = []
+        offset = 0
+        while True:
+            found = normalized_current.find(normalized_before, offset)
+            if found < 0:
+                break
+            positions.append(found)
+            offset = found + 1
+        if not positions:
+            raise ValueError(EDIT_ANCHOR_NOT_FOUND)
+        if len(positions) > 1:
+            raise ValueError(EDIT_ANCHOR_AMBIGUOUS)
+
+        start = boundaries[positions[0]]
+        end = boundaries[positions[0] + len(normalized_before)]
+        source_span = current[start:end]
+        source_eol = "\r\n" if "\r\n" in source_span else "\n"
+        replacement = after.replace("\r\n", "\n").replace("\n", source_eol)
+        return start, end, replacement
+
+    @staticmethod
+    def _normalize_newlines(text: str) -> tuple[str, list[int]]:
+        normalized: list[str] = []
+        boundaries = [0]
+        index = 0
+        while index < len(text):
+            if text.startswith("\r\n", index):
+                normalized.append("\n")
+                index += 2
+            else:
+                normalized.append(text[index])
+                index += 1
+            boundaries.append(index)
+        return "".join(normalized), boundaries

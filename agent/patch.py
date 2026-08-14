@@ -38,6 +38,6 @@ class PatchApplierService:
                 target.unlink()
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(patch.content or "", encoding="utf-8")
+                target.write_bytes((patch.content or "").encode("utf-8"))
             touched.append(patch.path)
         return touched
