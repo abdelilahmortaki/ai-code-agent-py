@@ -993,30 +993,6 @@ class PgStore:
             "capped": capped,
         }
 
-    def count_embeddings(
-        self,
-        project_version_id: str,
-        provider: str,
-        deployment_or_model: str,
-        dimensions: int | None = None,
-    ) -> int:
-        """Count symbol_embeddings rows of a version matching a provider profile."""
-        sql = (
-            "SELECT count(*) AS n FROM symbol_embeddings "
-            "WHERE project_version_id = %s AND provider = %s "
-            "AND deployment_or_model = %s "
-            "AND (%s::int IS NULL OR dimensions = %s)"
-        )
-        try:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        sql, (project_version_id, provider, deployment_or_model, dimensions, dimensions)
-                    )
-                    return int(cur.fetchone()["n"])
-        except psycopg.Error as exc:
-            raise PgStoreError("failed to count symbol embeddings") from exc
-
     def edges_among(
         self,
         project_version_id: str,
