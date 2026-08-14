@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 
 _MAX_GENERATION_ATTEMPTS = 2
+_LLM_INVOCATION_ERROR = "provider call failed"
 _PRESERVATION_FEEDBACK = (
     "Previous proposal was rejected because it changed unrelated formatting. "
     "Regenerate from the authoritative source. "
@@ -177,8 +178,8 @@ class AgentOrchestrator:
                 log("Regenerating with preservation feedback")
                 feedback = _PRESERVATION_FEEDBACK + f"\nPrevious validation error: {exc}"
                 continue
-            except Exception as exc:
-                self._record_llm_invocation(run_id, log, status="failed", error=str(exc))
+            except Exception:
+                self._record_llm_invocation(run_id, log, status="failed", error=_LLM_INVOCATION_ERROR)
                 raise
             log("Proposal validated")
             return plan, attempt
