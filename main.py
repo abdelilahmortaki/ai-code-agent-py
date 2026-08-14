@@ -189,6 +189,19 @@ def search_symbols(
         raise HTTPException(status_code=400, detail=detail)
 
 
+@app.get("/api/agent/runs")
+def list_runs(limit: int = Query(default=50, ge=1, le=500)):
+    """List the most recent persisted runs with their LLM invocations (F3.1)."""
+    if db_store is None:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    runs = db_store.list_runs(limit=limit)
+    invocations = {
+        run_id: db_store.list_llm_invocations(run_id)
+        for run_id in {r["id"] for r in runs}
+    }
+    return [{"run": r, "invocations": invocations.get(r["id"], [])} for r in runs]
+
+
 @app.post("/api/agent/{project_id}/generate/{story_id}", response_model=PatchResult)
 def generate_patch(project_id: str, story_id: str):
     try:

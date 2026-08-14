@@ -7,6 +7,7 @@ from typing import Any, Sequence
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 
 class PgStoreError(RuntimeError):
@@ -869,3 +870,167 @@ class PgStore:
                     return dict(row) if row is not None else None
         except psycopg.Error as exc:
             raise PgStoreError("failed to find project version by number") from exc
+
+    # ------------------------------------------------------------------ runs
+
+    def create_run(
+        self,
+        project_id: str,
+        project_version_id: str | None,
+        story_snapshot: dict,
+        priority: str,
+        complexity: int | None = None,
+    ) -> dict:
+        if not project_id or not priority:
+            raise ValueError("project_id and priority must be non-empty")
+        if complexity is not None and not isinstance(complexity, int):
+            raise ValueError("complexity must be an integer or None")
+        sql = (
+            "INSERT INTO runs "
+            "(project_id, project_version_id, story_snapshot, priority, complexity, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s) "
+            "RETURNING id, project_id, project_version_id, story_snapshot, priority, "
+            "complexity, status, test_status, human_decision, error, created_at, completed_at"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql,
+                        (project_id, project_version_id, Jsonb(story_snapshot), priority, complexity, "running"),
+                    )
+                    return dict(cur.fetchone())
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to create run") from exc
+
+    def update_run_status(
+        self,
+        run_id: str,
+        status: str,
+        complexity: int | None = None,
+        test_status: str | None = None,
+        human_decision: str | None = None,
+        error: str | None = None,
+    ) -> dict | None:
+        """Update a run's status plus any provided optional fields.
+
+        Terminal statuses (``completed``/``failed``) also stamp
+        ``completed_at`` (first terminal write wins). Only fixed, whitelisted
+        column names are ever interpolated into the SQL; all values are
+        parameterized.
+        """
+        if not status:
+            raise ValueError("status must be non-empty")
+        if complexity is not None and not isinstance(complexity, int):
+            raise ValueError("complexity must be an integer or None")
+        sets = ["status = %s"]
+        params: list = [status]
+        for column, value in (
+            ("complexity", complexity),
+            ("test_status", test_status),
+            ("human_decision", human_decision),
+            ("error", error),
+        ):
+            if value is not None:
+                sets.append(f"{column} = %s")
+                params.append(value)
+        if status in {"completed", "failed"}:
+            sets.append("completed_at = COALESCE(completed_at, now())")
+        sql = (
+            "UPDATE runs SET "
+            + ", ".join(sets)
+            + " WHERE id = %s "
+            "RETURNING id, project_id, project_version_id, story_snapshot, priority, "
+            "complexity, status, test_status, human_decision, error, created_at, completed_at"
+        )
+        params.append(run_id)
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, params)
+                    row = cur.fetchone()
+                    return dict(row) if row is not None else None
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to update run status") from exc
+
+    def complete_run(
+        self,
+        run_id: str,
+        status: str,
+        human_decision: str | None = None,
+        error: str | None = None,
+    ) -> dict | None:
+        """Mark a run terminal, optionally recording the human decision."""
+        return self.update_run_status(
+            run_id, status, human_decision=human_decision, error=error
+        )
+
+    def insert_llm_invocation(
+        self,
+        run_id: str,
+        provider: str | None = None,
+        model: str | None = None,
+        status: str | None = None,
+        error: str | None = None,
+    ) -> dict:
+        sql = (
+            "INSERT INTO llm_invocations (run_id, provider, model, status, error) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "RETURNING id, run_id, provider, model, prompt_tokens, completion_tokens, "
+            "total_tokens, status, error, created_at"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (run_id, provider, model, status, error))
+                    return dict(cur.fetchone())
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to insert llm invocation") from exc
+
+    def find_run(self, run_id: str) -> dict | None:
+        """Return a run row by id, or None if it does not exist."""
+        sql = (
+            "SELECT id, project_id, project_version_id, story_snapshot, priority, "
+            "complexity, status, test_status, human_decision, error, created_at, completed_at "
+            "FROM runs WHERE id = %s"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (run_id,))
+                    row = cur.fetchone()
+                    return dict(row) if row is not None else None
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to find run") from exc
+
+    def list_runs(self, limit: int = 50) -> list[dict]:
+        """Return the most recent runs, newest first."""
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        sql = (
+            "SELECT id, project_id, project_version_id, story_snapshot, priority, "
+            "complexity, status, test_status, human_decision, error, created_at, completed_at "
+            "FROM runs ORDER BY created_at DESC, id DESC LIMIT %s"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (limit,))
+                    return [dict(row) for row in cur.fetchall()]
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to list runs") from exc
+
+    def list_llm_invocations(self, run_id: str) -> list[dict]:
+        """Return every llm_invocations row linked to a run, oldest first."""
+        sql = (
+            "SELECT id, run_id, provider, model, prompt_tokens, completion_tokens, "
+            "total_tokens, status, error, created_at "
+            "FROM llm_invocations WHERE run_id = %s ORDER BY created_at ASC, id ASC"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (run_id,))
+                    return [dict(row) for row in cur.fetchall()]
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to list llm invocations") from exc
