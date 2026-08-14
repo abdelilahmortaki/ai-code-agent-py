@@ -914,10 +914,10 @@ class PgStore:
     ) -> dict | None:
         """Update a run's status plus any provided optional fields.
 
-        Terminal statuses (``completed``/``failed``) also stamp
-        ``completed_at`` (first terminal write wins). Only fixed, whitelisted
-        column names are ever interpolated into the SQL; all values are
-        parameterized.
+        Terminal statuses (``completed``/``failed``/``superseded``) also
+        stamp ``completed_at`` (first terminal write wins). Only fixed,
+        whitelisted column names are ever interpolated into the SQL; all
+        values are parameterized.
         """
         if not status:
             raise ValueError("status must be non-empty")
@@ -934,7 +934,7 @@ class PgStore:
             if value is not None:
                 sets.append(f"{column} = %s")
                 params.append(value)
-        if status in {"completed", "failed"}:
+        if status in {"completed", "failed", "superseded"}:
             sets.append("completed_at = COALESCE(completed_at, now())")
         sql = (
             "UPDATE runs SET "

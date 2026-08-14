@@ -192,7 +192,10 @@ class AgentOrchestrator:
         raise RuntimeError("Generation attempts exhausted")
 
     def _run(self, project, story: UserStory, log: Callable[[str], None] = _noop) -> PatchResult:
-        self._pending_plans.pop(project.id, None)
+        previous = self._pending_plans.pop(project.id, None)
+        if previous is not None:
+            _, _, previous_run_id = previous
+            self._set_run_status(previous_run_id, "superseded", log)
         run_id = self._start_run(project, story, log)
         try:
             return self._run_lifecycle(project, story, log, run_id)
