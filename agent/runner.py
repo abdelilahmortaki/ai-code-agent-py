@@ -1,36 +1,25 @@
 from __future__ import annotations
-import subprocess
-from pathlib import Path
 
 from agent.config import ProjectConfig
 from agent.models import TestRunResult
+from agent.safe_runner import SafeCommandExecutor, split_command
 
 
 class TestRunner:
     def run_tests(self, project: ProjectConfig) -> TestRunResult:
-        return self._run(project.repo_root, project.test_command)
+        return self._run(project.repo_root, project.test_command, project.validation_timeout_seconds)
 
     def run_static_analysis(self, project: ProjectConfig) -> TestRunResult:
         cmd = project.static_analysis_command
         if not cmd or not cmd.strip():
             return TestRunResult(command="", exit_code=0, output="Static analysis disabled")
-        return self._run(project.repo_root, cmd)
+        return self._run(project.repo_root, cmd, project.validation_timeout_seconds)
 
-    def _run(self, working_dir: str, command: str) -> TestRunResult:
+    def _run(self, working_dir: str, command: str, timeout: int = 300) -> TestRunResult:
         if not command or not command.strip():
             return TestRunResult(command=command, exit_code=0, output="No command specified")
         try:
-            result = subprocess.run(
-                command,
-                cwd=Path(working_dir).resolve(),
-                shell=True,          # handles mvn, sh, cmd.exe transparently
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
-            output = (result.stdout or "") + (result.stderr or "")
-            return TestRunResult(command=command, exit_code=result.returncode, output=output)
-        except subprocess.TimeoutExpired:
-            return TestRunResult(command=command, exit_code=1, output="Command timed out after 300s")
-        except Exception as e:
-            return TestRunResult(command=command, exit_code=1, output=f"Execution error: {e}")
+            argv = split_command(command)
+            return SafeCommandExecutor().run(argv, cwd=working_dir, timeout=timeout)
+        except Exception as exc:
+            return TestRunResult(command=command, exit_code=1, output=f"Execution error: {exc}")

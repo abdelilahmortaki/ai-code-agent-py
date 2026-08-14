@@ -7,6 +7,7 @@ from typing import Any, Sequence
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 
 class PgStoreError(RuntimeError):
@@ -794,6 +795,179 @@ class PgStore:
         except psycopg.Error as exc:
             raise PgStoreError("failed to list code symbols") from exc
 
+    def find_symbols_by_qualified_name(
+        self, project_version_id: str, qualified_name: str
+    ) -> list[dict]:
+        """Return every symbol of a version whose qualified name matches.
+
+        A seed name is matched against the persisted ``qualified_name`` (e.g.
+        ``com.acme.service.CustomerService`` or
+        ``com.acme.service.CustomerService.findCustomer``) or the
+        ``owner.name`` shorthand. Returns the symbol rows joined with their
+        file path, deterministically ordered by ``start_line`` then ``id``.
+        """
+        sql = (
+            "SELECT s.id, s.file_id, f.path, s.module, s.package_name, s.owner, "
+            "s.symbol_type, s.name, s.qualified_name, s.signature, s.start_line, "
+            "s.end_line "
+            "FROM code_symbols s "
+            "JOIN code_files f ON f.id = s.file_id "
+            "WHERE s.project_version_id = %s "
+            "AND (s.qualified_name = %s "
+            "OR concat_ws('.', NULLIF(s.owner, ''), s.name) = %s) "
+            "ORDER BY s.start_line, s.id"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql, (project_version_id, qualified_name, qualified_name)
+                    )
+                    return [dict(row) for row in cur.fetchall()]
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to look up symbols by qualified name") from exc
+
+    def expand_neighbors(
+        self,
+        project_version_id: str,
+        seed_symbol_ids: Sequence[str],
+        depth: int = 0,
+        max_related: int = 20,
+        relation_types: Sequence[str] | None = None,
+    ) -> dict:
+        """Walk code_edges up to depth 1 from a set of seed symbols (F2.3).
+
+        Depth 0 returns only the seed symbols. Depth 1 additionally returns
+        every direct neighbor symbol of a seed: outgoing targets (callees,
+        imported types, superclasses, tests) and incoming sources (callers,
+        importers, subclasses, implementors), optionally restricted to the
+        given ``relation_types``.
+
+        Neighbors are deduplicated by symbol id (a symbol reachable via
+        several edges appears once), each carrying the sorted
+        ``relations`` list of ``{"relation_type", "direction"}`` pairs that
+        connect it to a seed. The result is ordered deterministically by
+        ``name``, ``start_line``, ``id`` and capped at ``max_related`` related
+        symbols; ``capped`` is True only when the cap truncated the result.
+        Only parameterized SQL is used. ``depth`` must be 0 or 1 and
+        ``max_related`` a non-negative integer, otherwise ValueError.
+
+        Returns ``{"seeds": [...], "neighbors": [...], "depth": depth,
+        "capped": bool}``.
+        """
+        if depth not in (0, 1):
+            raise ValueError("depth must be 0 or 1")
+        if not isinstance(max_related, int) or max_related < 0:
+            raise ValueError("max_related must be a non-negative integer")
+        ids = [str(s) for s in seed_symbol_ids]
+        for symbol_id in ids:
+            try:
+                uuid.UUID(symbol_id)
+            except (ValueError, AttributeError, TypeError) as exc:
+                raise ValueError(
+                    f"seed symbol id must be a valid UUID: {symbol_id!r}"
+                ) from exc
+        relations = None
+        if relation_types:
+            relations = sorted({str(r) for r in relation_types if str(r)})
+
+        seed_sql = (
+            "SELECT s.id, s.file_id, f.path, s.module, s.package_name, s.owner, "
+            "s.symbol_type, s.name, s.qualified_name, s.signature, s.start_line, "
+            "s.end_line "
+            "FROM code_symbols s "
+            "JOIN code_files f ON f.id = s.file_id "
+            "WHERE s.project_version_id = %s AND s.id = ANY(%s::uuid[]) "
+            "ORDER BY s.start_line, s.id"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(seed_sql, (project_version_id, ids))
+                    seeds = [dict(row) for row in cur.fetchall()]
+                    if depth == 0:
+                        return {
+                            "seeds": seeds,
+                            "neighbors": [],
+                            "depth": 0,
+                            "capped": False,
+                        }
+                    neighbor_sql = (
+                        "WITH seeds AS ("
+                        "  SELECT s.id FROM code_symbols s "
+                        "  WHERE s.project_version_id = %s AND s.id = ANY(%s::uuid[])"
+                        "), "
+                        "out_edges AS ("
+                        "  SELECT e.target_symbol_id AS sid, e.relation_type AS rel "
+                        "  FROM code_edges e "
+                        "  WHERE e.project_version_id = %s "
+                        "  AND e.source_symbol_id = ANY(%s::uuid[]) "
+                        "  AND (%s::text[] IS NULL OR e.relation_type = ANY(%s::text[])) "
+                        "  AND NOT EXISTS (SELECT 1 FROM seeds s WHERE s.id = e.target_symbol_id)"
+                        "), "
+                        "in_edges AS ("
+                        "  SELECT e.source_symbol_id AS sid, e.relation_type AS rel "
+                        "  FROM code_edges e "
+                        "  WHERE e.project_version_id = %s "
+                        "  AND e.target_symbol_id = ANY(%s::uuid[]) "
+                        "  AND (%s::text[] IS NULL OR e.relation_type = ANY(%s::text[])) "
+                        "  AND NOT EXISTS (SELECT 1 FROM seeds s WHERE s.id = e.source_symbol_id)"
+                        "), "
+                        "neighbors AS ("
+                        "  SELECT sid, rel, 'outgoing' AS direction FROM out_edges "
+                        "  UNION ALL "
+                        "  SELECT sid, rel, 'incoming' AS direction FROM in_edges"
+                        "), "
+                        "grouped AS ("
+                        "  SELECT sid, array_agg(DISTINCT rel || ':' || direction) "
+                        "  AS relations FROM neighbors GROUP BY sid"
+                        ") "
+                        "SELECT s.id, s.file_id, f.path, s.module, s.package_name, s.owner, "
+                        "s.symbol_type, s.name, s.qualified_name, s.signature, s.start_line, "
+                        "s.end_line, g.relations "
+                        "FROM grouped g "
+                        "JOIN code_symbols s ON s.id = g.sid AND s.project_version_id = %s "
+                        "JOIN code_files f ON f.id = s.file_id "
+                        "ORDER BY s.name, s.start_line, s.id "
+                        "LIMIT %s"
+                    )
+                    cur.execute(
+                        neighbor_sql,
+                        (
+                            project_version_id,
+                            ids,
+                            project_version_id,
+                            ids,
+                            relations,
+                            relations,
+                            project_version_id,
+                            ids,
+                            relations,
+                            relations,
+                            project_version_id,
+                            max_related + 1,
+                        ),
+                    )
+                    rows = [dict(row) for row in cur.fetchall()]
+        except PgStoreError:
+            raise
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to expand graph neighbors") from exc
+        capped = len(rows) > max_related
+        neighbors = rows[:max_related]
+        for row in neighbors:
+            raw_relations = row.pop("relations") or []
+            row["relations"] = [
+                {"relation_type": entry.partition(":")[0], "direction": entry.partition(":")[2]}
+                for entry in sorted(raw_relations)
+            ]
+        return {
+            "seeds": seeds,
+            "neighbors": neighbors,
+            "depth": 1,
+            "capped": capped,
+        }
+
     def replace_edges(
         self,
         project_version_id: str,
@@ -869,3 +1043,167 @@ class PgStore:
                     return dict(row) if row is not None else None
         except psycopg.Error as exc:
             raise PgStoreError("failed to find project version by number") from exc
+
+    # ------------------------------------------------------------------ runs
+
+    def create_run(
+        self,
+        project_id: str,
+        project_version_id: str | None,
+        story_snapshot: dict,
+        priority: str,
+        complexity: int | None = None,
+    ) -> dict:
+        if not project_id or not priority:
+            raise ValueError("project_id and priority must be non-empty")
+        if complexity is not None and not isinstance(complexity, int):
+            raise ValueError("complexity must be an integer or None")
+        sql = (
+            "INSERT INTO runs "
+            "(project_id, project_version_id, story_snapshot, priority, complexity, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s) "
+            "RETURNING id, project_id, project_version_id, story_snapshot, priority, "
+            "complexity, status, test_status, human_decision, error, created_at, completed_at"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql,
+                        (project_id, project_version_id, Jsonb(story_snapshot), priority, complexity, "running"),
+                    )
+                    return dict(cur.fetchone())
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to create run") from exc
+
+    def update_run_status(
+        self,
+        run_id: str,
+        status: str,
+        complexity: int | None = None,
+        test_status: str | None = None,
+        human_decision: str | None = None,
+        error: str | None = None,
+    ) -> dict | None:
+        """Update a run's status plus any provided optional fields.
+
+        Terminal statuses (``completed``/``failed``/``superseded``) also
+        stamp ``completed_at`` (first terminal write wins). Only fixed,
+        whitelisted column names are ever interpolated into the SQL; all
+        values are parameterized.
+        """
+        if not status:
+            raise ValueError("status must be non-empty")
+        if complexity is not None and not isinstance(complexity, int):
+            raise ValueError("complexity must be an integer or None")
+        sets = ["status = %s"]
+        params: list = [status]
+        for column, value in (
+            ("complexity", complexity),
+            ("test_status", test_status),
+            ("human_decision", human_decision),
+            ("error", error),
+        ):
+            if value is not None:
+                sets.append(f"{column} = %s")
+                params.append(value)
+        if status in {"completed", "failed", "superseded"}:
+            sets.append("completed_at = COALESCE(completed_at, now())")
+        sql = (
+            "UPDATE runs SET "
+            + ", ".join(sets)
+            + " WHERE id = %s "
+            "RETURNING id, project_id, project_version_id, story_snapshot, priority, "
+            "complexity, status, test_status, human_decision, error, created_at, completed_at"
+        )
+        params.append(run_id)
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, params)
+                    row = cur.fetchone()
+                    return dict(row) if row is not None else None
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to update run status") from exc
+
+    def complete_run(
+        self,
+        run_id: str,
+        status: str,
+        human_decision: str | None = None,
+        error: str | None = None,
+    ) -> dict | None:
+        """Mark a run terminal, optionally recording the human decision."""
+        return self.update_run_status(
+            run_id, status, human_decision=human_decision, error=error
+        )
+
+    def insert_llm_invocation(
+        self,
+        run_id: str,
+        provider: str | None = None,
+        model: str | None = None,
+        status: str | None = None,
+        error: str | None = None,
+    ) -> dict:
+        sql = (
+            "INSERT INTO llm_invocations (run_id, provider, model, status, error) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "RETURNING id, run_id, provider, model, prompt_tokens, completion_tokens, "
+            "total_tokens, status, error, created_at"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (run_id, provider, model, status, error))
+                    return dict(cur.fetchone())
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to insert llm invocation") from exc
+
+    def find_run(self, run_id: str) -> dict | None:
+        """Return a run row by id, or None if it does not exist."""
+        sql = (
+            "SELECT id, project_id, project_version_id, story_snapshot, priority, "
+            "complexity, status, test_status, human_decision, error, created_at, completed_at "
+            "FROM runs WHERE id = %s"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (run_id,))
+                    row = cur.fetchone()
+                    return dict(row) if row is not None else None
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to find run") from exc
+
+    def list_runs(self, limit: int = 50) -> list[dict]:
+        """Return the most recent runs, newest first."""
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        sql = (
+            "SELECT id, project_id, project_version_id, story_snapshot, priority, "
+            "complexity, status, test_status, human_decision, error, created_at, completed_at "
+            "FROM runs ORDER BY created_at DESC, id DESC LIMIT %s"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (limit,))
+                    return [dict(row) for row in cur.fetchall()]
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to list runs") from exc
+
+    def list_llm_invocations(self, run_id: str) -> list[dict]:
+        """Return every llm_invocations row linked to a run, oldest first."""
+        sql = (
+            "SELECT id, run_id, provider, model, prompt_tokens, completion_tokens, "
+            "total_tokens, status, error, created_at "
+            "FROM llm_invocations WHERE run_id = %s ORDER BY created_at ASC, id ASC"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (run_id,))
+                    return [dict(row) for row in cur.fetchall()]
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to list llm invocations") from exc
