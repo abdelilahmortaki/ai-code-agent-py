@@ -211,7 +211,7 @@
         </div>
         <div class="fg">
           <label>Priority</label>
-          <select id="s-priority"><option>High</option><option selected>Medium</option><option>Low</option></select>
+          <select id="s-priority"><option>P1</option><option>P2</option><option selected>P3</option><option>P4</option></select>
         </div>
       </div>
       <div class="form-row">
@@ -664,7 +664,7 @@ function loadStory(id) {
   document.getElementById('s-title').value = s.title || '';
   document.getElementById('s-desc').value = s.description || '';
   document.getElementById('s-criteria').value = (s.acceptanceCriteria || []).join('\n');
-  document.getElementById('s-priority').value = s.priority || 'Medium';
+  document.getElementById('s-priority').value = s.priority || 'P3';
 }
 
 // ─── run agent ───────────────────────────────────────────────────────────────
