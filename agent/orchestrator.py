@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
 
 _MAX_GENERATION_ATTEMPTS = 2
+_LLM_INVOCATION_ERROR = "provider call failed"
+_ACCEPT_FAILED_ERROR = "accept failed"
 _PRESERVATION_FEEDBACK = (
     "Previous proposal was rejected because it changed unrelated formatting. "
     "Regenerate from the authoritative source. "
@@ -64,8 +66,10 @@ class AgentOrchestrator:
         self.materializer = PatchMaterializer()
         self.prompt_guard = prompt_guard or PromptGuardService()
         self.store = store
-        # Pending plans awaiting user accept/reject — keyed by project_id
-        self._pending_plans: dict[str, tuple[PatchPlan, str]] = {}
+        # Pending plans awaiting user accept/reject — keyed by project_id.
+        # Each entry is (plan, preview_diff, run_id) where run_id may be None
+        # when run persistence is disabled.
+        self._pending_plans: dict[str, tuple[PatchPlan, str, str | None]] = {}
 
     # ------------------------------------------------------------------ public
 
@@ -94,15 +98,22 @@ class AgentOrchestrator:
         entry = self._pending_plans.pop(project_id, None)
         if entry is None:
             raise ValueError(f"No pending plan for project '{project_id}'")
-        plan, preview_diff = entry
+        plan, preview_diff, run_id = entry
         project = self.config.project_by_id(project_id)
-        self.patch_applier.apply(project, plan)
+        try:
+            self.patch_applier.apply(project, plan)
+        except Exception:
+            self._record_human_decision(run_id, "accepted", error=_ACCEPT_FAILED_ERROR)
+            raise
+        self._record_human_decision(run_id, "accepted")
         # Return the pre-computed diff — no git required
         return preview_diff
 
     def reject_plan(self, project_id: str) -> None:
         """Discard the pending patch plan for a project."""
-        self._pending_plans.pop(project_id, None)
+        entry = self._pending_plans.pop(project_id, None)
+        if entry is not None:
+            self._record_human_decision(entry[2], "rejected")
 
     def process_story(self, project_id: str, story_id: str, log_callback: Callable[[str], None] = _noop) -> PatchResult:
         project = self.config.project_by_id(project_id)
@@ -148,6 +159,7 @@ class AgentOrchestrator:
         relevant_files: list[tuple[str, str]],
         static_analysis: str,
         log: Callable[[str], None],
+        run_id: str | None = None,
     ) -> tuple[PatchPlan, int]:
         feedback = ""
         for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
@@ -161,6 +173,11 @@ class AgentOrchestrator:
                     log,
                     validation_feedback=feedback,
                 )
+            except Exception:
+                self._record_llm_invocation(run_id, log, status="failed", error=_LLM_INVOCATION_ERROR)
+                raise
+            self._record_llm_invocation(run_id, log, status="ok")
+            try:
                 plan = self.materializer.materialize(project, proposal)
                 self.prompt_guard.validate_materialized_minimality(project, plan, story)
             except ValueError as exc:
@@ -175,7 +192,18 @@ class AgentOrchestrator:
         raise RuntimeError("Generation attempts exhausted")
 
     def _run(self, project, story: UserStory, log: Callable[[str], None] = _noop) -> PatchResult:
-        self._pending_plans.pop(project.id, None)
+        previous = self._pending_plans.pop(project.id, None)
+        if previous is not None:
+            _, _, previous_run_id = previous
+            self._set_run_status(previous_run_id, "superseded", log)
+        run_id = self._start_run(project, story, log)
+        try:
+            return self._run_lifecycle(project, story, log, run_id)
+        except Exception:
+            self._fail_run(run_id, log)
+            raise
+
+    def _run_lifecycle(self, project, story: UserStory, log: Callable[[str], None], run_id: str | None) -> PatchResult:
         log("Checking semantic index…")
         if not self.semantic_index.exists(project):
             log("Index missing — building from codebase…")
@@ -202,7 +230,7 @@ class AgentOrchestrator:
         log(f"Context: {len(relevant_files)} file(s) loaded ({total_chars:,} chars total)")
 
         plan, attempts_used = self._generate_patch_plan(
-            project, story, relevant_files, pre_analysis.report, log
+            project, story, relevant_files, pre_analysis.report, log, run_id=run_id
         )
         ops = ", ".join(sorted({f.operation for f in plan.files})) or "none"
         log(f"Patch plan: {len(plan.files)} file(s) [{ops}] — {plan.summary}")
@@ -212,7 +240,8 @@ class AgentOrchestrator:
         log(f"Diff ready — {preview_diff.count(chr(10))} lines changed")
 
         # Store plan + pre-computed diff for accept/reject — do NOT write files yet
-        self._pending_plans[project.id] = (plan, preview_diff)
+        self._pending_plans[project.id] = (plan, preview_diff, run_id)
+        self._set_run_status(run_id, "awaiting_review", log)
         log("Awaiting your review — Accept or Reject the changes")
 
         return PatchResult(
@@ -225,3 +254,75 @@ class AgentOrchestrator:
             attempts_used=attempts_used,
             pending_review=True,
         )
+
+    # ------------------------------------------------------------------ run persistence (best-effort)
+
+    def _start_run(self, project, story: UserStory, log: Callable[[str], None]) -> str | None:
+        """Create a persisted run record; returns its id or None when skipped."""
+        if self.store is None:
+            return None
+        try:
+            project_version_id = None
+            db_project = self.store.find_project_by_external_id(project.id)
+            if db_project is not None:
+                version = self.store.latest_version(db_project["id"])
+                if version is not None:
+                    project_version_id = version["id"]
+            run = self.store.create_run(
+                project_id=project.id,
+                project_version_id=project_version_id,
+                story_snapshot=story.model_dump(),
+                priority=story.priority,
+            )
+            log(f"Run recorded: {run['id']}")
+            return run["id"]
+        except Exception as exc:
+            log(f"Run persistence skipped: {exc}")
+            return None
+
+    def _set_run_status(self, run_id: str | None, status: str, log: Callable[[str], None]) -> None:
+        if run_id is None or self.store is None:
+            return
+        try:
+            self.store.update_run_status(run_id, status)
+        except Exception as exc:
+            log(f"Run status update skipped: {exc}")
+
+    def _fail_run(self, run_id: str | None, log: Callable[[str], None]) -> None:
+        if run_id is None or self.store is None:
+            return
+        try:
+            self.store.complete_run(run_id, "failed", error="generation failed")
+        except Exception as exc:
+            log(f"Run failure update skipped: {exc}")
+
+    def _record_llm_invocation(
+        self,
+        run_id: str | None,
+        log: Callable[[str], None],
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        if run_id is None or self.store is None:
+            return
+        try:
+            provider = getattr(self.generation_provider, "provider_name", None)
+            model = getattr(self.generation_provider, "model_identity", None)
+            self.store.insert_llm_invocation(
+                run_id, provider=provider, model=model, status=status, error=error
+            )
+        except Exception as exc:
+            log(f"Invocation persistence skipped: {exc}")
+
+    def _record_human_decision(
+        self, run_id: str | None, decision: str, error: str | None = None
+    ) -> None:
+        if run_id is None or self.store is None:
+            return
+        try:
+            if error is not None:
+                self.store.complete_run(run_id, "failed", human_decision=decision, error=error)
+            else:
+                self.store.complete_run(run_id, "completed", human_decision=decision)
+        except Exception:
+            pass
