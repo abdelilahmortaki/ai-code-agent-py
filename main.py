@@ -11,17 +11,20 @@ from pydantic import BaseModel, field_validator
 from agent.analysis import StaticAnalysisService
 from agent.codebase import CodebaseService
 from agent.config import Settings, ProjectConfig
-from agent.factory import create_provider_runtime
+from agent.factory import create_database_store, create_provider_runtime
 from agent.git_service import GitDiffService
 from agent.guard import PatchGuardService, PromptGuardService
 from agent.index import SemanticIndexService
+from agent.indexer import SymbolEmbeddingIndexer
 from agent.models import PatchResult, ProjectOverview, UserStory
 from agent.orchestrator import AgentOrchestrator
 from agent.paths import resolve_within
 from agent.patch import PatchApplierService
 from agent.priority import normalize_priority
 from agent.runner import TestRunner
+from agent.search import LexicalSearchService
 from agent.stories import StoryFileReader
+from agent.versioning import VersionIndexer
 
 # ---------------------------------------------------------------------------
 # Project registry — persisted to .agent/projects.json
@@ -77,6 +80,9 @@ git_diff        = GitDiffService()
 static_analysis = StaticAnalysisService(codebase)
 test_runner     = TestRunner()
 story_reader    = StoryFileReader()
+db_store        = create_database_store(settings)
+version_indexer = VersionIndexer(codebase, db_store)
+symbol_embedding_indexer = SymbolEmbeddingIndexer(codebase, db_store, provider_runtime.embedding)
 
 orchestrator = AgentOrchestrator(
     config=settings.agent,
@@ -89,6 +95,7 @@ orchestrator = AgentOrchestrator(
     test_runner=test_runner,
     story_reader=story_reader,
     prompt_guard=prompt_guard,
+    store=db_store,
 )
 
 # Active SSE log queues — keyed by client-generated run_id (UUID)
@@ -132,6 +139,55 @@ def rebuild_index(project_id: str):
         return {"message": msg}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/agent/{project_id}/index/version")
+def index_version(project_id: str):
+    if db_store is None:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    try:
+        proj = orchestrator.config.project_by_id(project_id)
+        return version_indexer.index_version(proj)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/agent/{project_id}/index/pg")
+def index_symbols_pg(project_id: str, incremental: bool = Query(default=False)):
+    if db_store is None:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    try:
+        proj = orchestrator.config.project_by_id(project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if incremental:
+        return symbol_embedding_indexer.index_incremental(proj)
+    return symbol_embedding_indexer.index(proj)
+
+
+@app.get("/api/agent/{project_id}/search")
+def search_symbols(
+    project_id: str,
+    query: str = Query(...),
+    top_k: int = Query(default=10),
+    symbol_type: str = Query(default=None),
+):
+    if db_store is None:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    try:
+        orchestrator.config.project_by_id(project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    filters = {"symbol_type": symbol_type} if symbol_type else None
+    try:
+        return LexicalSearchService(db_store).search_latest(
+            project_id, query, top_k=top_k, filters=filters
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail.startswith("unknown project") or detail == "no versions for project":
+            raise HTTPException(status_code=404, detail=detail)
+        raise HTTPException(status_code=400, detail=detail)
 
 
 @app.post("/api/agent/{project_id}/generate/{story_id}", response_model=PatchResult)
@@ -200,7 +256,7 @@ def upload_project(req: _UploadRequest):
 
     for f, dest in destinations:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(f.content, encoding="utf-8")
+        dest.write_bytes(f.content.encode("utf-8"))
 
     new_proj = ProjectConfig(
         id=project_id,
