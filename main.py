@@ -13,6 +13,7 @@ from agent.codebase import CodebaseService
 from agent.config import Settings, ProjectConfig
 from agent.factory import create_database_store, create_provider_runtime
 from agent.git_service import GitDiffService
+from agent.graph import GraphExpansionService
 from agent.guard import PatchGuardService, PromptGuardService
 from agent.index import SemanticIndexService
 from agent.indexer import SymbolEmbeddingIndexer
@@ -181,6 +182,35 @@ def search_symbols(
     try:
         return LexicalSearchService(db_store).search_latest(
             project_id, query, top_k=top_k, filters=filters
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail.startswith("unknown project") or detail == "no versions for project":
+            raise HTTPException(status_code=404, detail=detail)
+        raise HTTPException(status_code=400, detail=detail)
+
+
+@app.get("/api/agent/{project_id}/expand")
+def expand_symbols(
+    project_id: str,
+    seeds: str = Query(...),
+    depth: int = Query(default=1),
+    max_related: int = Query(default=20),
+    relation: str = Query(default=None),
+):
+    if db_store is None:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    seed_names = [s.strip() for s in seeds.split(",") if s.strip()]
+    if not seed_names:
+        raise HTTPException(status_code=400, detail="seeds must not be empty")
+    relation_types = [r.strip() for r in relation.split(",") if r.strip()] if relation else None
+    try:
+        return GraphExpansionService(db_store).expand_latest(
+            project_id,
+            seed_names,
+            depth=depth,
+            max_related=max_related,
+            relation_types=relation_types,
         )
     except ValueError as exc:
         detail = str(exc)
