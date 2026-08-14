@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from agent.analysis import StaticAnalysisService
 from agent.codebase import CodebaseService
@@ -20,7 +20,8 @@ from agent.indexer import SymbolEmbeddingIndexer
 from agent.models import PatchResult, ProjectOverview, UserStory
 from agent.orchestrator import AgentOrchestrator
 from agent.paths import resolve_within
-from agent.patch import PatchApplierService
+from agent.patch import PatchApplierService, StalePatchError
+from agent.priority import normalize_priority
 from agent.runner import TestRunner
 from agent.search import LexicalSearchService
 from agent.stories import StoryFileReader
@@ -311,7 +312,12 @@ class AdHocStoryRequest(BaseModel):
     title: str
     description: str
     acceptanceCriteria: list[str] = []
-    priority: str = "Medium"
+    priority: str = "P3"
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _normalize_priority(cls, v: object) -> str:
+        return normalize_priority(v)
 
 
 @app.get("/api/agent/{project_id}/run/{run_id}/log")
@@ -385,6 +391,8 @@ def accept_plan(project_id: str):
     try:
         diff = orchestrator.accept_plan(project_id)
         return {"status": "accepted", "git_diff": diff}
+    except StalePatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:

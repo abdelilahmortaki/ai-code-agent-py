@@ -1,13 +1,20 @@
 from __future__ import annotations
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from agent.priority import normalize_priority
 
 class UserStory(BaseModel):
     id: str
     title: str
     description: str
     acceptanceCriteria: list[str] = []
-    priority: str = "Medium"
+    priority: str = "P3"
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _normalize_priority(cls, v: object) -> str:
+        return normalize_priority(v)
 
 class RepoChunk(BaseModel):
     path: str
@@ -41,6 +48,7 @@ class PatchFile(BaseModel):
     path: str
     operation: str
     content: Optional[str] = None
+    base_file_hash: Optional[str] = None
 
 class PatchPlan(BaseModel):
     storyId: str
