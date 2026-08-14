@@ -255,7 +255,7 @@ def upload_project(req: _UploadRequest):
 
     for f, dest in destinations:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(f.content, encoding="utf-8")
+        dest.write_bytes(f.content.encode("utf-8"))
 
     new_proj = ProjectConfig(
         id=project_id,
