@@ -139,6 +139,7 @@ class AzureOpenAIGenerationProvider:
         prompt: str,
         log_callback: Callable[[str], None],
     ) -> PatchProposalPlan:
+        self.last_usage = None
         log_callback("Connecting to Azure OpenAI…")
         raw_text = ""
         response = None

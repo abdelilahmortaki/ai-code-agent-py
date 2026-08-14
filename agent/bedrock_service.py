@@ -134,6 +134,7 @@ class BedrockService:
     # ------------------------------------------------------------------ private
 
     def _call(self, story_id: str, prompt: str, log_callback: Callable[[str], None] = _noop) -> PatchProposalPlan:
+        self.last_usage = None
         log_callback("Connecting to AWS Bedrock…")
         response = self._client.converse_stream(
             modelId=self.cfg.model_id,
@@ -164,8 +165,10 @@ class BedrockService:
                 stop_reason = event["messageStop"].get("stopReason", "")
                 if stop_reason == "max_tokens":
                     hit_limit = True
-            elif "usage" in event:
-                self.last_usage = event["usage"]
+            elif "metadata" in event:
+                usage = event["metadata"].get("usage")
+                if usage is not None:
+                    self.last_usage = usage
 
         if hit_limit:
             _log.warning("Bedrock response hit max_tokens limit — attempting JSON repair")
