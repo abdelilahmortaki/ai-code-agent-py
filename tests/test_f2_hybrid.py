@@ -38,6 +38,200 @@ def _find(items: list, qualified_name: str):
     return None
 
 
+class _StoryLexicalFixture:
+    def __init__(self):
+        self.queries = []
+        self.rows = {
+            "RecordError": [
+                {
+                    "id": "class-record-error",
+                    "name": "RecordError",
+                    "qualified_name": "example.errors.RecordError",
+                    "symbol_type": "class",
+                    "path": "src/RecordError.java",
+                    "source": "class RecordError {}",
+                    "lexical_score": 100.0,
+                    "match_kind": "exact",
+                    "matched_fields": ["name"],
+                    "name_sim": 1.0,
+                    "start_line": 1,
+                },
+                {
+                    "id": "constructor-record-error",
+                    "name": "constructor",
+                    "qualified_name": "example.errors.RecordError.constructor",
+                    "symbol_type": "constructor",
+                    "path": "src/RecordError.java",
+                    "source": "RecordError() {}",
+                    "lexical_score": 20.0,
+                    "match_kind": "contains",
+                    "matched_fields": ["qualified_name"],
+                    "name_sim": 0.0,
+                    "start_line": 2,
+                },
+            ],
+            "NOT_FOUND": [
+                {
+                    "id": "method-not-found",
+                    "name": "notFound",
+                    "qualified_name": "example.errors.RecordError.notFound",
+                    "symbol_type": "method",
+                    "path": "src/RecordError.java",
+                    "source": "return new RecordError(NOT_FOUND);",
+                    "lexical_score": 63.33,
+                    "match_kind": "fuzzy",
+                    "matched_fields": ["source"],
+                    "name_sim": 0.5833,
+                    "start_line": 10,
+                }
+            ],
+            "notFound": [
+                {
+                    "id": "method-not-found",
+                    "name": "notFound",
+                    "qualified_name": "example.errors.RecordError.notFound",
+                    "symbol_type": "method",
+                    "path": "src/RecordError.java",
+                    "source": "return new RecordError(NOT_FOUND);",
+                    "lexical_score": 100.0,
+                    "match_kind": "exact",
+                    "matched_fields": ["name"],
+                    "name_sim": 1.0,
+                    "start_line": 10,
+                }
+            ],
+        }
+
+    def search(self, _version_id, query, top_k=10):
+        self.queries.append(query)
+        return [dict(row) for row in self.rows.get(query, [])[:top_k]]
+
+
+class _StoryStoreFixture:
+    def __init__(self):
+        self.vector_calls = []
+        self.rows = {
+            "class-record-error": {
+                "id": "class-record-error",
+                "name": "RecordError",
+                "qualified_name": "example.errors.RecordError",
+                "symbol_type": "class",
+                "path": "src/RecordError.java",
+                "source": "class RecordError {}",
+                "distance": 0.90,
+                "start_line": 1,
+            },
+            "constructor-record-error": {
+                "id": "constructor-record-error",
+                "name": "constructor",
+                "qualified_name": "example.errors.RecordError.constructor",
+                "symbol_type": "constructor",
+                "path": "src/RecordError.java",
+                "source": "RecordError() {}",
+                "distance": 0.35,
+                "start_line": 2,
+            },
+            "method-not-found": {
+                "id": "method-not-found",
+                "name": "notFound",
+                "qualified_name": "example.errors.RecordError.notFound",
+                "symbol_type": "method",
+                "path": "src/RecordError.java",
+                "source": "return new RecordError(NOT_FOUND);",
+                "distance": 0.70,
+                "start_line": 10,
+            },
+        }
+
+    def find_project_by_external_id(self, project_id):
+        return {"id": "project-row", "external_id": project_id}
+
+    def latest_version(self, _project_id):
+        return {"id": "version-row", "version_number": 7}
+
+    def search_similar(self, embedding, provider, deployment_or_model, top_k, project_version_id):
+        self.vector_calls.append(
+            (list(embedding), provider, deployment_or_model, top_k, project_version_id)
+        )
+        return [dict(self.rows[key], embedding=[0.1, 0.2]) for key in self.rows]
+
+    def edges_among(self, _version_id, _seed_ids):
+        return []
+
+    def symbol_sources(self, _version_id, symbol_ids):
+        return {symbol_id: self.rows[symbol_id]["source"] for symbol_id in symbol_ids}
+
+
+class _StoryGraphFixture:
+    def __init__(self, store):
+        self.store = store
+
+    def expand(self, _version_id, _seed_ids, depth, max_related):
+        assert depth == 1
+        return {
+            "neighbors": [
+                {
+                    **self.store.rows["constructor-record-error"],
+                    "relations": [{"relation_type": "CALLS", "direction": "incoming"}],
+                }
+            ][:max_related]
+        }
+
+
+def test_long_story_derives_lexical_terms_and_keeps_vector_query_unchanged():
+    from agent.retrieval import HybridRetrievalService, derive_lexical_terms
+
+    story = (
+        "Update not-found error code\n"
+        "Change the not-found domain error in RecordError from NOT_FOUND to "
+        "RESOURCE_NOT_FOUND.\n"
+        "Only modify the intended behavior; preserve the existing source structure."
+    )
+    terms = derive_lexical_terms(story)
+    assert terms == [
+        "not-found",
+        "notFound",
+        "RecordError",
+        "NOT_FOUND",
+        "RESOURCE_NOT_FOUND",
+        "resourceNotFound",
+    ]
+    assert len(terms) <= 24 and all(len(term) <= 80 for term in terms)
+
+    store = _StoryStoreFixture()
+    lexical = _StoryLexicalFixture()
+    retrieval_service = HybridRetrievalService(store, FakeEmbeddingProvider())
+    retrieval_service.lexical = lexical
+    retrieval_service.graph = _StoryGraphFixture(store)
+
+    runs = [
+        retrieval_service.retrieve("story-project", story, top_k=10, graph_depth=1)
+        for _ in range(5)
+    ]
+    result = runs[0]
+    target = _item(result, "example.errors.RecordError.notFound")
+    constructor = _item(result, "example.errors.RecordError.constructor")
+    assert target is not None and constructor is not None
+    assert result["query"] == story
+    assert all(call[0] == list(FakeEmbeddingProvider().embed_texts([story])[0]) for call in store.vector_calls)
+    assert all(call[4] == "version-row" and call[1:3] == ("fake", "fake-model-v1") for call in store.vector_calls)
+    assert lexical.queries == terms * 5
+    assert story not in lexical.queries
+    assert "lexical" in target["retrieval_sources"]
+    assert {match["term"] for match in target["lexical"]["matches"]} == {"NOT_FOUND", "notFound"}
+    assert all({"term", "score", "match_kind", "matched_fields", "reason"} <= set(match) for match in target["lexical"]["matches"])
+    assert any("notFound" in reason for reason in target["reasons"])
+    assert target["final_score"] > constructor["final_score"]
+    assert constructor["scores"]["graph"] == 0.10
+    assert "embedding" not in str(result).lower()
+
+    depth0 = retrieval_service.retrieve("story-project", story, top_k=10, graph_depth=0)
+    assert all(item["scores"]["graph"] == 0 for item in depth0["items"])
+    assert [(item["symbol_id"], item["final_score"]) for item in result["items"]] == [
+        (item["symbol_id"], item["final_score"]) for item in runs[1]["items"]
+    ]
+
+
 # ---------------------------------------------------------------------------
 # #19 — deterministic hybrid ranking
 # ---------------------------------------------------------------------------

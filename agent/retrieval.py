@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from typing import TYPE_CHECKING
 
@@ -63,6 +64,14 @@ _LEXICAL_REASONS = {
 }
 
 _MAX_POOL_SIZE = 50
+_MAX_LEXICAL_TERMS = 24
+_MAX_LEXICAL_TERM_CHARS = 80
+_TECHNICAL_TOKEN = re.compile(
+    r"[A-Za-z_$][A-Za-z0-9_$]*(?:(?:[.-])[A-Za-z0-9_$]+)*"
+)
+_UPPER_SNAKE = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
+_PASCAL = re.compile(r"[A-Z][a-z0-9]*(?:[A-Z][a-z0-9]*)+$")
+_CAMEL = re.compile(r"[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+$")
 
 
 def _clamp01(value: float) -> float:
@@ -82,6 +91,93 @@ def _qualified_name(row: dict) -> str:
         for part in (row.get("package_name"), row.get("owner"), row.get("name"))
         if part
     )
+
+
+def _camel_case(parts: list[str]) -> str:
+    return parts[0].lower() + "".join(part[:1].upper() + part[1:].lower() for part in parts[1:])
+
+
+def derive_lexical_terms(query: str) -> list[str]:
+    """Extract bounded, deterministic code-oriented probes from ticket text."""
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    def add(term: str) -> None:
+        term = term.strip()
+        key = term.casefold()
+        if (
+            term
+            and len(term) <= _MAX_LEXICAL_TERM_CHARS
+            and key not in seen
+            and len(terms) < _MAX_LEXICAL_TERMS
+        ):
+            seen.add(key)
+            terms.append(term)
+
+    for token in _TECHNICAL_TOKEN.findall(query):
+        if "." in token:
+            add(token)
+        elif "-" in token:
+            add(token)
+            add(_camel_case(token.split("-")))
+        elif _UPPER_SNAKE.fullmatch(token):
+            add(token)
+            add(_camel_case(token.split("_")))
+        elif _PASCAL.fullmatch(token) or _CAMEL.fullmatch(token):
+            add(token)
+    return terms
+
+
+def _lexical_reason(match_kind: str, matched_fields: list[str]) -> str:
+    reason = _LEXICAL_REASONS.get(match_kind, "contains match")
+    if match_kind == "contains" and matched_fields:
+        reason += f" ({', '.join(matched_fields)})"
+    return reason
+
+
+def _lexical_match(row: dict, term: str) -> dict:
+    matched_fields = list(row.get("matched_fields") or [])
+    match_kind = row.get("match_kind", "contains")
+    return {
+        "term": term,
+        "score": float(row.get("lexical_score", 0.0)),
+        "match_kind": match_kind,
+        "matched_fields": matched_fields,
+        "name_sim": float(row.get("name_sim", 0.0)),
+        "reason": _lexical_reason(match_kind, matched_fields),
+    }
+
+
+def _aggregate_lexical(matches: list[dict]) -> dict:
+    ordered = sorted(
+        matches,
+        key=lambda match: (
+            -float(match["score"]),
+            match["term"].casefold(),
+            match["match_kind"],
+            tuple(match["matched_fields"]),
+        ),
+    )
+    strongest = ordered[0]
+    strongest_score = max(0.0, float(strongest["score"])) / 100.0
+    secondary_score = min(
+        1.0,
+        sum(max(0.0, float(match["score"])) / 100.0 for match in ordered[1:]),
+    )
+    # ponytail: secondary lexical evidence is capped at one extra match;
+    # calibrate per-term weights only if relevance data justifies it.
+    aggregate_score = 100.0 * (strongest_score + 0.20 * secondary_score)
+    return {
+        "score": aggregate_score,
+        "term": strongest["term"],
+        "match_kind": strongest["match_kind"],
+        "matched_fields": sorted(
+            {field for match in ordered for field in match["matched_fields"]}
+        ),
+        "name_sim": max(float(match["name_sim"]) for match in ordered),
+        "reason": f"{len(ordered)} direct lexical term match(es)",
+        "matches": ordered,
+    }
 
 
 class HybridRetrievalService:
@@ -212,36 +308,36 @@ class HybridRetrievalService:
         pool_size = min(_MAX_POOL_SIZE, max(top_k, max_related, 10))
 
         candidates: dict[str, dict] = {}
-        lexical_rows: list[dict] = []
+        lexical_candidate_ids: set[str] = set()
         vector_rows: list[dict] = []
 
         # --- lexical ---------------------------------------------------------
-        lexical_rows = self.lexical.search(version_id, query, top_k=pool_size)
-        for row in lexical_rows:
-            row.pop("embedding", None)
-            lex_score = _clamp01(float(row.get("lexical_score", 0.0)) / 100.0)
-            match_kind = row.get("match_kind", "contains")
-            lexical_evidence = {
-                "score": float(row.get("lexical_score", 0.0)),
-                "match_kind": match_kind,
-                "matched_fields": list(row.get("matched_fields") or []),
-                "name_sim": float(row.get("name_sim", 0.0)),
-            }
-            candidate = candidates.get(row["id"])
-            if candidate is None:
-                candidate = {
-                    "row": row,
-                    "lexical_comp": lex_score,
-                    "lexical": lexical_evidence,
-                    "vector_comp": 0.0,
-                    "vector": None,
-                    "graph_comp": 0.0,
-                    "graph": None,
-                }
-                candidates[row["id"]] = candidate
-            else:
-                candidate["lexical_comp"] = lex_score
-                candidate["lexical"] = lexical_evidence
+        lexical_matches: dict[str, list[dict]] = {}
+        for term in derive_lexical_terms(query):
+            for row in self.lexical.search(version_id, term, top_k=pool_size):
+                row.pop("embedding", None)
+                lexical_candidate_ids.add(row["id"])
+                matches = lexical_matches.setdefault(row["id"], [])
+                matches.append(_lexical_match(row, term))
+                lexical_evidence = _aggregate_lexical(matches)
+                lex_score = _LEXICAL_WEIGHT * (
+                    float(lexical_evidence["score"]) / 100.0
+                )
+                candidate = candidates.get(row["id"])
+                if candidate is None:
+                    candidate = {
+                        "row": row,
+                        "lexical_comp": lex_score,
+                        "lexical": lexical_evidence,
+                        "vector_comp": 0.0,
+                        "vector": None,
+                        "graph_comp": 0.0,
+                        "graph": None,
+                    }
+                    candidates[row["id"]] = candidate
+                else:
+                    candidate["lexical_comp"] = lex_score
+                    candidate["lexical"] = lexical_evidence
 
         # --- vector ----------------------------------------------------------
         if self.embedding_provider is not None:
@@ -407,7 +503,7 @@ class HybridRetrievalService:
             "max_related": max_related,
             "complexity": complexity,
             "counts": {
-                "lexical": len(lexical_rows),
+                "lexical": len(lexical_candidate_ids),
                 "vector": len(vector_rows),
                 "graph_neighbors": graph_evidence_count,
                 "candidates": len(candidates),
@@ -427,11 +523,19 @@ class HybridRetrievalService:
         reasons: list[str] = []
         if lexical is not None:
             sources.append("lexical")
-            match_kind = lexical.get("match_kind", "contains")
-            reason = _LEXICAL_REASONS.get(match_kind, "contains match")
-            if match_kind == "contains" and lexical.get("matched_fields"):
-                reason += f" ({', '.join(lexical['matched_fields'])})"
-            reasons.append(reason)
+            matches = lexical.get("matches") or []
+            if matches:
+                if len(matches) == 1:
+                    reasons.append(matches[0]["reason"])
+                reasons.extend(
+                    f"direct lexical match: {match['term']} ({match['reason']})"
+                    for match in matches
+                )
+            else:
+                match_kind = lexical.get("match_kind", "contains")
+                reasons.append(
+                    _lexical_reason(match_kind, lexical.get("matched_fields") or [])
+                )
         if vector is not None:
             sources.append("vector")
             reasons.append("semantic match")
