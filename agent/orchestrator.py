@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import difflib
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from agent.config import AgentConfig
 from agent.analysis import StaticAnalysisService
@@ -16,6 +16,9 @@ from agent.patch import PatchApplierService
 from agent.providers import GenerationProvider
 from agent.runner import TestRunner
 from agent.stories import StoryFileReader
+
+if TYPE_CHECKING:
+    from agent.db.store import PgStore
 
 
 _MAX_GENERATION_ATTEMPTS = 2
@@ -47,6 +50,7 @@ class AgentOrchestrator:
         test_runner: TestRunner,
         story_reader: StoryFileReader,
         prompt_guard: PromptGuardService | None = None,
+        store: PgStore | None = None,
     ) -> None:
         self.config = config
         self.codebase = codebase
@@ -59,6 +63,7 @@ class AgentOrchestrator:
         self.story_reader = story_reader
         self.materializer = PatchMaterializer()
         self.prompt_guard = prompt_guard or PromptGuardService()
+        self.store = store
         # Pending plans awaiting user accept/reject — keyed by project_id
         self._pending_plans: dict[str, tuple[PatchPlan, str]] = {}
 

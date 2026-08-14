@@ -81,11 +81,16 @@ class OpenAiConfig(BaseModel):  # kept for backward-compat, unused when Bedrock 
     embeddings_model: str = "text-embedding-3-small"
 
 
+class DatabaseConfig(BaseModel):
+    url: SecretStr = SecretStr("")
+
+
 class Settings(BaseModel):
     ai_provider: str = "bedrock"
     bedrock: BedrockConfig = BedrockConfig()
     azure: AzureConfig = AzureConfig()
     agent: AgentConfig = AgentConfig()
+    database: DatabaseConfig = DatabaseConfig()
 
     @classmethod
     def load(cls, config_path: str = "config.yml") -> "Settings":
@@ -133,4 +138,14 @@ class Settings(BaseModel):
             projects=[ProjectConfig(**p) for p in projects_data],
         )
 
-        return cls(ai_provider=provider, bedrock=bedrock_cfg, azure=azure_cfg, agent=agent_cfg)
+        db_data: dict = dict(data.get("database", {}))
+        db_url = os.getenv("DATABASE_URL") or str(db_data.get("url", "") or "")
+        database_cfg = DatabaseConfig(url=SecretStr(db_url))
+
+        return cls(
+            ai_provider=provider,
+            bedrock=bedrock_cfg,
+            azure=azure_cfg,
+            agent=agent_cfg,
+            database=database_cfg,
+        )

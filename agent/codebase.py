@@ -8,14 +8,14 @@ class CodebaseService:
     def __init__(self, max_file_chars: int = 12000):
         self.max_file_chars = max_file_chars
 
-    def scan(self, project: ProjectConfig) -> list[tuple[str, str]]:
-        """Return (relative_path, content) for every supported file in the repo."""
+    def scan_paths(self, project: ProjectConfig) -> list[str]:
+        """Return sorted relative POSIX paths for every supported file in the repo."""
         root = Path(project.repo_root).resolve()
         if not root.exists():
             raise ValueError(f"Repo root not found: {root}")
 
         excluded = set(project.normalized_excluded_directories())
-        docs: list[tuple[str, str]] = []
+        paths: list[str] = []
 
         for path in root.rglob("*"):
             rel = path.relative_to(root).as_posix()
@@ -29,7 +29,18 @@ class CodebaseService:
                 continue
             if self._is_excluded(rel, excluded):
                 continue
+            paths.append(rel)
+
+        return sorted(paths)
+
+    def scan(self, project: ProjectConfig) -> list[tuple[str, str]]:
+        """Return (relative_path, content) for every supported file in the repo."""
+        root = Path(project.repo_root).resolve()
+        docs: list[tuple[str, str]] = []
+
+        for rel in self.scan_paths(project):
             try:
+                target = resolve_within(root, rel)
                 content = target.read_text(encoding="utf-8", errors="ignore")
                 if content and not content.isspace():
                     docs.append((rel, self._limit(content, self.max_file_chars)))
