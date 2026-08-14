@@ -97,6 +97,7 @@ class BedrockService:
         self.cfg = cfg
         self.prompt_guard = prompt_guard
         self._client = boto3.client("bedrock-runtime", region_name=cfg.region)
+        self.last_usage: dict | None = None
 
     # ------------------------------------------------------------------ public
 
@@ -163,6 +164,8 @@ class BedrockService:
                 stop_reason = event["messageStop"].get("stopReason", "")
                 if stop_reason == "max_tokens":
                     hit_limit = True
+            elif "usage" in event:
+                self.last_usage = event["usage"]
 
         if hit_limit:
             _log.warning("Bedrock response hit max_tokens limit — attempting JSON repair")
