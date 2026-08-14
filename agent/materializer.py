@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 from pathlib import Path
 from agent.config import ProjectConfig
 from agent.models import PatchFile, PatchPlan, PatchProposalPlan, ProposalFile
@@ -14,13 +15,17 @@ class PatchMaterializer:
         root = Path(project.repo_root).resolve()
         result: list[PatchFile] = []
         for proposal in plan.files:
-            target = resolve_within(root, proposal.path)
-            current = target.read_text(encoding="utf-8") if target.exists() else ""
             operation = proposal.operation.lower()
+            target = resolve_within(root, proposal.path)
+            raw = target.read_bytes() if target.exists() else b""
+            current = raw.decode("utf-8")
+            base_file_hash = None
+            if operation in {"modify", "delete"} and target.exists():
+                base_file_hash = hashlib.sha256(raw).hexdigest()
             content = proposal.content if operation == "create" else None
             if operation == "modify":
                 content = self.materialize_content(current, proposal)
-            result.append(PatchFile(path=proposal.path, operation=operation, content=content))
+            result.append(PatchFile(path=proposal.path, operation=operation, content=content, base_file_hash=base_file_hash))
         return PatchPlan(storyId=plan.storyId, summary=plan.summary, files=result, tests=plan.tests, notes=plan.notes)
 
     @staticmethod

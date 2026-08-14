@@ -1,10 +1,16 @@
 from __future__ import annotations
+import hashlib
 from pathlib import Path
 from agent.config import ProjectConfig
 from agent.guard import PatchGuardService
 from agent.materializer import PatchMaterializer
 from agent.models import PatchPlan
 from agent.paths import resolve_within
+
+STALE_PATCH = "STALE_PATCH"
+
+class StalePatchError(ValueError):
+    pass
 
 class PatchApplierService:
     def __init__(self, guard: PatchGuardService, materializer: PatchMaterializer | None = None) -> None:
@@ -14,6 +20,17 @@ class PatchApplierService:
     def apply(self, project: ProjectConfig, plan: PatchPlan) -> list[str]:
         self.guard.validate(project, plan.files)
         root = Path(project.repo_root).resolve()
+        for patch in plan.files:
+            if patch.operation.lower() in {"modify", "delete"}:
+                if not patch.base_file_hash:
+                    raise StalePatchError(STALE_PATCH)
+                target = resolve_within(root, patch.path)
+                try:
+                    current_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+                except OSError:
+                    raise StalePatchError(STALE_PATCH)
+                if current_hash != patch.base_file_hash:
+                    raise StalePatchError(STALE_PATCH)
         touched = []
         for patch in plan.files:
             target = resolve_within(root, patch.path)

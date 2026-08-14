@@ -6,20 +6,22 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from agent.analysis import StaticAnalysisService
 from agent.codebase import CodebaseService
 from agent.config import Settings, ProjectConfig
 from agent.factory import create_database_store, create_provider_runtime
 from agent.git_service import GitDiffService
+from agent.graph import GraphExpansionService
 from agent.guard import PatchGuardService, PromptGuardService
 from agent.index import SemanticIndexService
 from agent.indexer import SymbolEmbeddingIndexer
 from agent.models import PatchResult, ProjectOverview, UserStory
 from agent.orchestrator import AgentOrchestrator
 from agent.paths import resolve_within
-from agent.patch import PatchApplierService
+from agent.patch import PatchApplierService, StalePatchError
+from agent.priority import normalize_priority
 from agent.runner import TestRunner
 from agent.search import LexicalSearchService
 from agent.stories import StoryFileReader
@@ -202,6 +204,35 @@ def list_runs(limit: int = Query(default=50, ge=1, le=500)):
     return [{"run": r, "invocations": invocations.get(r["id"], [])} for r in runs]
 
 
+@app.get("/api/agent/{project_id}/expand")
+def expand_symbols(
+    project_id: str,
+    seeds: str = Query(...),
+    depth: int = Query(default=1),
+    max_related: int = Query(default=20),
+    relation: str = Query(default=None),
+):
+    if db_store is None:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    seed_names = [s.strip() for s in seeds.split(",") if s.strip()]
+    if not seed_names:
+        raise HTTPException(status_code=400, detail="seeds must not be empty")
+    relation_types = [r.strip() for r in relation.split(",") if r.strip()] if relation else None
+    try:
+        return GraphExpansionService(db_store).expand_latest(
+            project_id,
+            seed_names,
+            depth=depth,
+            max_related=max_related,
+            relation_types=relation_types,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail.startswith("unknown project") or detail == "no versions for project":
+            raise HTTPException(status_code=404, detail=detail)
+        raise HTTPException(status_code=400, detail=detail)
+
+
 @app.post("/api/agent/{project_id}/generate/{story_id}", response_model=PatchResult)
 def generate_patch(project_id: str, story_id: str):
     try:
@@ -294,7 +325,12 @@ class AdHocStoryRequest(BaseModel):
     title: str
     description: str
     acceptanceCriteria: list[str] = []
-    priority: str = "Medium"
+    priority: str = "P3"
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _normalize_priority(cls, v: object) -> str:
+        return normalize_priority(v)
 
 
 @app.get("/api/agent/{project_id}/run/{run_id}/log")
@@ -368,6 +404,8 @@ def accept_plan(project_id: str):
     try:
         diff = orchestrator.accept_plan(project_id)
         return {"status": "accepted", "git_diff": diff}
+    except StalePatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:

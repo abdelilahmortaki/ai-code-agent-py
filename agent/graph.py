@@ -21,6 +21,12 @@ Everything is a deterministic function of (stored rows, file texts):
 the same version and files produce the same edge set, which is
 deduplicated and sorted before persistence. Builds are idempotent
 (delete-then-insert for the version).
+
+F2.3 adds bounded 0/1-hop expansion over the persisted edges: given seed
+symbols, ``GraphExpansionService`` retrieves the seeds themselves (depth 0)
+and their direct neighbors (depth 1, both outgoing and incoming directions,
+deduplicated and capped at a configurable ``max_related``). Expansion is pure
+deterministic backend logic over ``code_edges`` - never an LLM call.
 """
 
 from __future__ import annotations
@@ -818,13 +824,124 @@ class CodeGraphBuilder:
 # --------------------------------------------------------------------------- CLI
 
 
+class GraphExpansionService:
+    """Bounded 0/1-hop graph expansion over code_edges (F2.3).
+
+    Depth 0 returns only the seed symbols; depth 1 adds every direct neighbor
+    (outgoing targets and incoming sources) of the seeds, deduplicated by
+    symbol id and capped at a configurable ``max_related``. Expansion is pure
+    deterministic backend logic (SQL + Python), never an LLM call.
+    """
+
+    def __init__(self, store: PgStore | None = None) -> None:
+        self.store = store
+
+    def expand(
+        self,
+        project_version_id: str,
+        seed_symbol_ids: Sequence[str],
+        depth: int = 0,
+        max_related: int = 20,
+        relation_types: Sequence[str] | None = None,
+    ) -> dict:
+        """Expand a single version from seed symbol ids.
+
+        Returns ``{"seeds": [...], "neighbors": [...], "depth": ...,
+        "capped": bool}`` (neighbors carry their connecting relation types
+        and directions). Depth must be 0 or 1 and max_related non-negative.
+        """
+        if self.store is None:
+            raise RuntimeError("database is not configured")
+        return self.store.expand_neighbors(
+            project_version_id,
+            seed_symbol_ids,
+            depth=depth,
+            max_related=max_related,
+            relation_types=relation_types,
+        )
+
+    def resolve_seeds(
+        self, project_version_id: str, seeds: Sequence[str]
+    ) -> tuple[list[dict], list[str]]:
+        """Resolve seed name strings to symbol rows of a version.
+
+        Each seed is matched against the persisted qualified name (or the
+        ``owner.name`` shorthand); a name may resolve to several symbols and
+        every match becomes a seed. Returns ``(rows, unresolved)`` with rows
+        deduplicated by symbol id in first-seen order and ``unresolved`` the
+        names with no match.
+        """
+        if self.store is None:
+            raise RuntimeError("database is not configured")
+        rows: list[dict] = []
+        seen: set[str] = set()
+        unresolved: list[str] = []
+        for raw in seeds:
+            name = str(raw).strip()
+            if not name:
+                continue
+            matches = self.store.find_symbols_by_qualified_name(
+                project_version_id, name
+            )
+            if not matches:
+                unresolved.append(name)
+                continue
+            for row in matches:
+                if row["id"] not in seen:
+                    seen.add(row["id"])
+                    rows.append(row)
+        return rows, unresolved
+
+    def expand_latest(
+        self,
+        project_id: str,
+        seeds: Sequence[str],
+        depth: int = 0,
+        max_related: int = 20,
+        relation_types: Sequence[str] | None = None,
+        version_number: int | None = None,
+    ) -> dict:
+        """Expand the highest-numbered (or given) version of a project.
+
+        Seed names are resolved to symbols within the version; unmatched
+        seeds are reported in ``unresolved_seeds``. Returns the expansion
+        result augmented with ``project_version_id`` and ``version_number``.
+        Raises ValueError for an unknown project or a project with no
+        versions.
+        """
+        if self.store is None:
+            raise RuntimeError("database is not configured")
+        project = self.store.find_project_by_external_id(project_id)
+        if project is None:
+            raise ValueError(f"unknown project: {project_id}")
+        if version_number is not None:
+            version = self.store.find_version_by_number(project["id"], version_number)
+        else:
+            version = self.store.latest_version(project["id"])
+        if version is None:
+            raise ValueError("no versions for project")
+        seed_rows, unresolved = self.resolve_seeds(version["id"], seeds)
+        result = self.store.expand_neighbors(
+            version["id"],
+            [row["id"] for row in seed_rows],
+            depth=depth,
+            max_related=max_related,
+            relation_types=relation_types,
+        )
+        result["project_version_id"] = version["id"]
+        result["version_number"] = version["version_number"]
+        result["unresolved_seeds"] = unresolved
+        return result
+
+
 def main(argv: list[str] | None = None) -> int:
     from agent.db.store import PgStore
     from agent.versioning import _database_url, _redact_secrets
 
     parser = argparse.ArgumentParser(
         prog="python -m agent.graph",
-        description="Build the deterministic code graph (code_edges) of a project version.",
+        description="Build the deterministic code graph (code_edges) of a project "
+        "version, or expand its neighbors (F2.3).",
     )
     parser.add_argument(
         "--repo-root",
@@ -845,10 +962,46 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Database URL (overrides DATABASE_URL)",
     )
+    parser.add_argument(
+        "--expand",
+        action="store_true",
+        default=False,
+        help="Expand graph neighbors of seed symbols instead of building the graph",
+    )
+    parser.add_argument(
+        "--seeds",
+        action="append",
+        default=[],
+        help="Seed symbol (qualified name or owner.name); repeatable and/or "
+        "comma-separated",
+    )
+    parser.add_argument(
+        "--depth",
+        type=int,
+        default=1,
+        help="Expansion depth: 0 (seeds only) or 1 (direct neighbors); default 1",
+    )
+    parser.add_argument(
+        "--max-related",
+        type=int,
+        default=20,
+        help="Maximum number of related (neighbor) symbols to return; default 20",
+    )
+    parser.add_argument(
+        "--relation",
+        action="append",
+        default=[],
+        help="Restrict expansion to a relation type (e.g. CALLS); repeatable",
+    )
     args = parser.parse_args(argv)
 
     if not args.project_id and not args.repo_root:
         parser.error("either --project-id or --repo-root is required")
+    seed_names = [
+        part.strip() for item in args.seeds for part in item.split(",") if part.strip()
+    ]
+    if args.expand and not seed_names:
+        parser.error("--expand requires at least one --seeds value")
 
     dsn = _database_url(args.url)
     if not dsn:
@@ -858,6 +1011,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    operation = "Graph expansion failed" if args.expand else "Graph build failed"
     try:
         store = PgStore(dsn)
         project_row = None
@@ -891,12 +1045,23 @@ def main(argv: list[str] | None = None) -> int:
         if version is None:
             print("No versions found for this project", file=sys.stderr)
             return 1
-        builder = CodeGraphBuilder(CodebaseService(), store)
-        result = builder.build(version["id"], str(root))
-        result["project_id"] = project_row["id"]
-        result["version_number"] = version["version_number"]
+        if args.expand:
+            result = GraphExpansionService(store).expand_latest(
+                project_row["external_id"],
+                seed_names,
+                depth=args.depth,
+                max_related=args.max_related,
+                relation_types=args.relation or None,
+                version_number=args.version,
+            )
+            result["project_id"] = project_row["id"]
+        else:
+            builder = CodeGraphBuilder(CodebaseService(), store)
+            result = builder.build(version["id"], str(root))
+            result["project_id"] = project_row["id"]
+            result["version_number"] = version["version_number"]
     except Exception as exc:
-        print(f"Graph build failed: {_redact_secrets(str(exc), dsn)}", file=sys.stderr)
+        print(f"{operation}: {_redact_secrets(str(exc), dsn)}", file=sys.stderr)
         return 1
 
     print(json.dumps(result, indent=2, default=str))
