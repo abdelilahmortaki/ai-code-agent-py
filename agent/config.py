@@ -38,12 +38,17 @@ class ProjectConfig(BaseModel):
 class AgentConfig(BaseModel):
     active_project: str = ""
     max_attempts: int = 3
-    max_context_files: int = 6   # number of full files sent to OpenAI (not chunks)
+    max_context_files: int = 6   # number of *full files* sent to OpenAI (not chunks)
     max_file_chars: int = 12000
     upload_allowed_extensions: list[str] = [ext.lstrip(".") for ext in SUPPORTED_EXTENSIONS]
     upload_max_file_bytes: int = 153600
     upload_max_total_bytes: int = 10485760
     projects: list[ProjectConfig] = []
+    # F2 hybrid contextual RAG knobs.
+    hybrid_graph_depth: int = 1        # 0 (no graph evidence) or 1 (direct neighbors)
+    hybrid_max_related: int = 8        # graph expansion fan-out cap
+    hybrid_retrieval_top_k: int = 10   # ranked symbols considered for context
+    hybrid_context_budget: int | None = None  # simulated F2 token budget (F3 replaces)
 
     def project_by_id(self, project_id: str) -> ProjectConfig:
         target_id = project_id or self.active_project
