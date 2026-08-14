@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 _MAX_GENERATION_ATTEMPTS = 2
 _LLM_INVOCATION_ERROR = "provider call failed"
+_ACCEPT_FAILED_ERROR = "accept failed"
 _PRESERVATION_FEEDBACK = (
     "Previous proposal was rejected because it changed unrelated formatting. "
     "Regenerate from the authoritative source. "
@@ -99,7 +100,11 @@ class AgentOrchestrator:
             raise ValueError(f"No pending plan for project '{project_id}'")
         plan, preview_diff, run_id = entry
         project = self.config.project_by_id(project_id)
-        self.patch_applier.apply(project, plan)
+        try:
+            self.patch_applier.apply(project, plan)
+        except Exception:
+            self._record_human_decision(run_id, "accepted", error=_ACCEPT_FAILED_ERROR)
+            raise
         self._record_human_decision(run_id, "accepted")
         # Return the pre-computed diff — no git required
         return preview_diff
@@ -168,7 +173,11 @@ class AgentOrchestrator:
                     log,
                     validation_feedback=feedback,
                 )
-                self._record_llm_invocation(run_id, log, status="ok")
+            except Exception:
+                self._record_llm_invocation(run_id, log, status="failed", error=_LLM_INVOCATION_ERROR)
+                raise
+            self._record_llm_invocation(run_id, log, status="ok")
+            try:
                 plan = self.materializer.materialize(project, proposal)
                 self.prompt_guard.validate_materialized_minimality(project, plan, story)
             except ValueError as exc:
@@ -178,9 +187,6 @@ class AgentOrchestrator:
                 log("Regenerating with preservation feedback")
                 feedback = _PRESERVATION_FEEDBACK + f"\nPrevious validation error: {exc}"
                 continue
-            except Exception:
-                self._record_llm_invocation(run_id, log, status="failed", error=_LLM_INVOCATION_ERROR)
-                raise
             log("Proposal validated")
             return plan, attempt
         raise RuntimeError("Generation attempts exhausted")
@@ -232,7 +238,7 @@ class AgentOrchestrator:
 
         # Store plan + pre-computed diff for accept/reject — do NOT write files yet
         self._pending_plans[project.id] = (plan, preview_diff, run_id)
-        self._finish_run(run_id, log)
+        self._set_run_status(run_id, "awaiting_review", log)
         log("Awaiting your review — Accept or Reject the changes")
 
         return PatchResult(
@@ -271,11 +277,11 @@ class AgentOrchestrator:
             log(f"Run persistence skipped: {exc}")
             return None
 
-    def _finish_run(self, run_id: str | None, log: Callable[[str], None]) -> None:
+    def _set_run_status(self, run_id: str | None, status: str, log: Callable[[str], None]) -> None:
         if run_id is None or self.store is None:
             return
         try:
-            self.store.complete_run(run_id, "completed")
+            self.store.update_run_status(run_id, status)
         except Exception as exc:
             log(f"Run status update skipped: {exc}")
 
@@ -305,10 +311,15 @@ class AgentOrchestrator:
         except Exception as exc:
             log(f"Invocation persistence skipped: {exc}")
 
-    def _record_human_decision(self, run_id: str | None, decision: str) -> None:
+    def _record_human_decision(
+        self, run_id: str | None, decision: str, error: str | None = None
+    ) -> None:
         if run_id is None or self.store is None:
             return
         try:
-            self.store.complete_run(run_id, "completed", human_decision=decision)
+            if error is not None:
+                self.store.complete_run(run_id, "failed", human_decision=decision, error=error)
+            else:
+                self.store.complete_run(run_id, "completed", human_decision=decision)
         except Exception:
             pass
