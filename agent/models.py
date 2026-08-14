@@ -48,6 +48,7 @@ class PatchFile(BaseModel):
     path: str
     operation: str
     content: Optional[str] = None
+    base_file_hash: Optional[str] = None
 
 class PatchPlan(BaseModel):
     storyId: str
