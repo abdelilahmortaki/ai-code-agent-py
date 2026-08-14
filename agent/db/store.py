@@ -505,12 +505,14 @@ class PgStore:
             raise ValueError("embedding must not be empty")
         dimensions = len(vector)
         sql = (
-            "SELECT s.id, s.project_version_id, s.file_id, s.module, s.owner, "
-            "s.symbol_type, s.name, s.signature, s.start_line, s.end_line, "
+            "SELECT s.id, s.project_version_id, s.file_id, f.path, s.module, "
+            "s.package_name, s.owner, s.symbol_type, s.name, s.qualified_name, "
+            "s.signature, s.start_line, s.end_line, "
             "se.embedding, se.provider, se.deployment_or_model, se.dimensions, "
             "se.embedding <=> %s::vector AS distance "
             "FROM symbol_embeddings se "
             "JOIN code_symbols s ON s.id = se.symbol_id "
+            "JOIN code_files f ON f.id = s.file_id "
             "WHERE se.provider = %s "
             "AND se.deployment_or_model = %s "
             "AND se.dimensions = %s "
@@ -795,6 +797,29 @@ class PgStore:
         except psycopg.Error as exc:
             raise PgStoreError("failed to list code symbols") from exc
 
+    def symbol_sources(
+        self, project_version_id: str, symbol_ids: Sequence[str]
+    ) -> dict[str, str]:
+        """Return a ``{symbol_id: source}`` map for the given ids of a version.
+
+        Used to enrich graph-neighbor candidates (which come from the edge
+        walk without their source text) so per-item token estimates are
+        meaningful.
+        """
+        ids = [str(s) for s in symbol_ids]
+        sql = (
+            "SELECT id, source FROM code_symbols "
+            "WHERE project_version_id = %s AND id = ANY(%s::uuid[])"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (project_version_id, ids))
+                    return {row["id"]: row["source"] for row in cur.fetchall()}
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to load symbol sources") from exc
+
+
     def find_symbols_by_qualified_name(
         self, project_version_id: str, qualified_name: str
     ) -> list[dict]:
@@ -968,6 +993,59 @@ class PgStore:
             "capped": capped,
         }
 
+    def count_embeddings(
+        self,
+        project_version_id: str,
+        provider: str,
+        deployment_or_model: str,
+        dimensions: int | None = None,
+    ) -> int:
+        """Count symbol_embeddings rows of a version matching a provider profile."""
+        sql = (
+            "SELECT count(*) AS n FROM symbol_embeddings "
+            "WHERE project_version_id = %s AND provider = %s "
+            "AND deployment_or_model = %s "
+            "AND (%s::int IS NULL OR dimensions = %s)"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql, (project_version_id, provider, deployment_or_model, dimensions, dimensions)
+                    )
+                    return int(cur.fetchone()["n"])
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to count symbol embeddings") from exc
+
+    def edges_among(
+        self,
+        project_version_id: str,
+        symbol_ids: Sequence[str],
+    ) -> list[dict]:
+        """Return edges whose BOTH endpoints are within a symbol id set.
+
+        Used by hybrid retrieval to detect direct graph evidence between
+        seed candidates (seed-to-seed edges) at graph depth 1. Returns
+        ``{"source_symbol_id", "target_symbol_id", "relation_type"}`` rows
+        ordered deterministically.
+        """
+        ids = [str(s) for s in symbol_ids]
+        sql = (
+            "SELECT source_symbol_id, target_symbol_id, relation_type "
+            "FROM code_edges "
+            "WHERE project_version_id = %s "
+            "AND source_symbol_id = ANY(%s::uuid[]) "
+            "AND target_symbol_id = ANY(%s::uuid[]) "
+            "ORDER BY relation_type, source_symbol_id, target_symbol_id"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (project_version_id, ids, ids))
+                    return [dict(row) for row in cur.fetchall()]
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to load edges among symbols") from exc
+
     def replace_edges(
         self,
         project_version_id: str,
@@ -1025,6 +1103,36 @@ class PgStore:
                     return int(cur.fetchone()["n"])
         except psycopg.Error as exc:
             raise PgStoreError("failed to count code edges") from exc
+
+    def count_embeddings(
+        self,
+        project_version_id: str,
+        provider: str | None = None,
+        deployment_or_model: str | None = None,
+        dimensions: int | None = None,
+    ) -> int:
+        """Count embedding rows of a version, optionally restricted to a
+        provider/model/dimension triple (used to detect whether the vector
+        signal exists for the currently configured embedding provider)."""
+        clauses = ["project_version_id = %s"]
+        params: list = [project_version_id]
+        if provider:
+            clauses.append("provider = %s")
+            params.append(provider)
+        if deployment_or_model:
+            clauses.append("deployment_or_model = %s")
+            params.append(deployment_or_model)
+        if dimensions is not None:
+            clauses.append("dimensions = %s")
+            params.append(dimensions)
+        sql = "SELECT count(*) AS n FROM symbol_embeddings WHERE " + " AND ".join(clauses)
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, params)
+                    return int(cur.fetchone()["n"])
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to count symbol embeddings") from exc
 
     def find_version_by_number(
         self, project_id: str, version_number: int
