@@ -75,6 +75,15 @@ class AgentConfig(BaseModel):
     routing_policy: dict = {}
     routing_model_overrides: dict = {}
 
+    # F5 disposable validation + bounded repair.
+    # validation_enabled: run the disposable-workspace test gate before review.
+    # test_selection_fallback: "none" (no targeted test -> skipped/passed with
+    #   recorded reason) or "verify" (fall back to the project test command).
+    # max_repair_attempts: bounded repair rounds (0 disables repair).
+    validation_enabled: bool = False
+    test_selection_fallback: str = "none"
+    max_repair_attempts: int = 2
+
     def project_by_id(self, project_id: str) -> ProjectConfig:
         target_id = project_id or self.active_project
         if not target_id and self.projects:

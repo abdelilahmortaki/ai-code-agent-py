@@ -334,7 +334,8 @@ class Engine:
         description = (
             f"In {self.target_rel}, change only the notFound error code from:\n\n"
             f"NOT_FOUND\n\nto:\n\nRESOURCE_NOT_FOUND\n\n"
-            "Do not modify any other line, whitespace, indentation, method, or file."
+            "Do not modify any other line, whitespace, indentation, method, or file. "
+            "Do not create or modify any test files."
         )
         acceptance = [
             "Only NOT_FOUND changes to RESOURCE_NOT_FOUND",
@@ -451,7 +452,8 @@ class Engine:
         print(f"INFO  branch = {self.branch}")
         print(f"INFO  HEAD = {self.head}")
         self.result.require(
-            "provenance", "branch", self.branch == "dev", "current branch is dev"
+            "provenance", "branch", self.branch == self.args.branch,
+            f"current branch is {self.args.branch}",
         )
 
     def check_config(self) -> None:
@@ -847,6 +849,17 @@ class Engine:
             and bool(str(field(first_latest, "model"))),
             "first linked latest LLM invocation is ok, Azure, and has a deployment/model",
         )
+        test_run = field(first_body, "test_run")
+        self.result.require(
+            "validation", "test-run",
+            isinstance(test_run, dict) and field(test_run, "exit_code") in (0, 1),
+            "disposable validation produced a TestRunResult",
+        )
+        self.result.require(
+            "validation", "test-status",
+            field(first_run, "test_status") in ("passed", "failed", "skipped"),
+            "run test_status is recorded",
+        )
         self.result.require(
             "finops", "count-method",
             bool(field(first_latest, "count_method")),
@@ -1023,6 +1036,88 @@ class Engine:
             "second run is completed with human_decision=accepted",
         )
 
+    def run_validation_fail_probe(self) -> None:
+        """F5 deliberate failing-validation probe (requires fallback=verify).
+
+        Targets GlobalExceptionHandler: its naming-convention test
+        GlobalExceptionHandlerTest is selected and deterministically FAILS to
+        run in this environment, proving: disposable validation FAILS; bounded
+        repair runs on the SAME run; accept is blocked with 409
+        VALIDATION_REQUIRED; reject leaves the reference source unchanged.
+        """
+        target_path = "shoppoc-app/src/main/java/com/shoppoc/app/web/GlobalExceptionHandler.java"
+        root = self.args.source_dir or self.project_root
+        target = get_safe_path(root, target_path)
+        before_sha = sha256(target)
+        story = {
+            "title": "f5-fail-probe",
+            "description": (
+                f"In {target_path}, change the hardcoded NOT_FOUND error string "
+                "in handleNotFound to RESOURCE_NOT_FOUND."
+            ),
+            "acceptanceCriteria": ["exact"],
+            "priority": "P3",
+        }
+        status, body, raw = self.api.post(
+            f"/api/agent/{self.project_id}/generate-adhoc", story
+        )
+        self.result.require(
+            "validation", "fail-probe-http",
+            status == 200 or status == 422,
+            f"failing-validation generation responds ({status})",
+        )
+        run_entries = []
+        status, body, _ = self.api.get("/api/agent/runs?limit=500")
+        run_entries = [e for e in body if str(field(field(e, "run"), "project_id")) == self.project_id]
+        if not run_entries:
+            self.result.require("validation", "fail-probe-run", False, "run persisted for the probe")
+            return
+        run = field(run_entries[0], "run")
+        test_status = field(run, "test_status")
+        self.result.require(
+            "validation", "fail-probe-test-status",
+            test_status == "failed",
+            f"validation FAILED as expected ({test_status})",
+        )
+        invocations = json_array(run_entries[0], "invocations")
+        repair_invocations = [
+            inv for inv in invocations
+            if "repair" in str(field(inv, "reduction_outcome") or "")
+        ]
+        self.result.require(
+            "repair", "invoked",
+            bool(repair_invocations),
+            f"bounded repair invocations persisted ({len(repair_invocations)})",
+        )
+        self.result.require(
+            "repair", "bounded",
+            len(invocations) <= 1 + self.args.attempt_cap + 2,
+            "repair attempts are bounded",
+        )
+        if test_status == "failed":
+            accept_status, accept_body, _ = self.api.post(
+                f"/api/agent/{self.project_id}/accept-plan"
+            )
+            self.result.require(
+                "validation", "validation-required-gate",
+                accept_status == 409
+                and str(field(accept_body, "detail")).startswith("VALIDATION_REQUIRED"),
+                "accept before PASS returns 409 VALIDATION_REQUIRED",
+            )
+        reject_status, reject_body, _ = self.api.post(
+            f"/api/agent/{self.project_id}/reject-plan"
+        )
+        self.result.require(
+            "reject", "fail-probe-reject",
+            reject_status == 200 and field(reject_body, "status") == "rejected",
+            "failing-validation proposal is rejected",
+        )
+        self.result.require(
+            "immutable", "fail-probe-immutable",
+            sha256(target) == before_sha,
+            "reference source is unchanged after failed validation + reject",
+        )
+
     def write_evidence(self) -> str:
         evidence_dir = Path(self.args.evidence_dir)
         evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -1072,7 +1167,10 @@ class Engine:
             self.check_executor()
             self.check_context()
             self.check_finops_boundary()
-            self.run_generation_lifecycle()
+            if self.args.validation_fail_probe:
+                self.run_validation_fail_probe()
+            else:
+                self.run_generation_lifecycle()
         except AssertionError as exc:
             print(f"FAIL  runtime acceptance stopped: {exc}")
             print("INFO  cleaning up any pending plan")
@@ -1097,8 +1195,8 @@ class Engine:
         for category in (
             "provenance", "config", "database", "migrations", "backend", "project",
             "target", "index", "search", "graph", "context", "priority", "executor",
-            "finops", "generation", "persistence", "reject", "accept", "immutable",
-            "evidence",
+            "finops", "routing", "validation", "generation", "persistence", "reject",
+            "accept", "immutable", "evidence",
         ):
             print(f"{category.upper():12} {self.result.category_status(category)}")
         print("")
@@ -1124,6 +1222,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--attempt-cap", type=int, default=3, choices=range(1, 6))
     parser.add_argument("--evidence-dir", default=str(EVIDENCE_DEFAULT))
     parser.add_argument("--accept-destructive", action="store_true")
+    parser.add_argument("--validation-fail-probe", action="store_true")
+    parser.add_argument("--branch", default="dev")
     return parser.parse_args(argv)
 
 

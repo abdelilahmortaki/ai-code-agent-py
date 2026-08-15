@@ -102,9 +102,10 @@ class AgentOrchestrator:
         self.hybrid_retrieval = hybrid_retrieval
         self.context_builder = context_builder
         # Pending plans awaiting user accept/reject — keyed by project_id.
-        # Each entry is (plan, preview_diff, run_id) where run_id may be None
-        # when run persistence is disabled.
-        self._pending_plans: dict[str, tuple[PatchPlan, str, str | None]] = {}
+        # Each entry is (plan, preview_diff, run_id, test_status) where
+        # run_id may be None when run persistence is disabled and
+        # test_status is None when validation is disabled.
+        self._pending_plans: dict[str, tuple[PatchPlan, str, str | None, str | None]] = {}
 
     # ------------------------------------------------------------------ public
 
@@ -128,12 +129,21 @@ class AgentOrchestrator:
         return f"Index rebuilt for '{project.id}' with {len(chunk_ids)} chunks"
 
     def accept_plan(self, project_id: str) -> str:
-        """Apply the pending patch plan for a project after user approval."""
+        """Apply the pending patch plan for a project after user approval.
+
+        Acceptance is allowed only when the latest validated proposal passed
+        (or validation is disabled/skipped). A proposal whose disposable
+        validation FAILED must not be applied: accept raises
+        ValueError("VALIDATION_REQUIRED") and the pending plan stays parked.
+        """
         from agent.models import PatchPlan
         entry = self._pending_plans.pop(project_id, None)
         if entry is None:
             raise ValueError(f"No pending plan for project '{project_id}'")
-        plan, preview_diff, run_id = entry
+        plan, preview_diff, run_id, test_status = entry
+        if test_status == "failed":
+            self._pending_plans[project_id] = entry
+            raise ValueError("VALIDATION_REQUIRED: latest proposal failed disposable validation")
         project = self.config.project_by_id(project_id)
         try:
             self.patch_applier.apply(project, plan)
@@ -385,7 +395,7 @@ class AgentOrchestrator:
     def _run(self, project, story: UserStory, log: Callable[[str], None] = _noop) -> PatchResult:
         previous = self._pending_plans.pop(project.id, None)
         if previous is not None:
-            _, _, previous_run_id = previous
+            _, _, previous_run_id, _ = previous
             self._set_run_status(previous_run_id, "superseded", log)
         run_id = self._start_run(project, story, log)
         try:
@@ -451,9 +461,19 @@ class AgentOrchestrator:
         preview_diff = self._preview_diff(project, plan)
         log(f"Diff ready — {preview_diff.count(chr(10))} lines changed")
 
+        # F5: disposable validation + bounded repair before review.
+        test_status = None
+        validation_result = None
+        if self.config.validation_enabled:
+            plan, test_status, preview_diff, validation_result = self._run_validation(
+                project, story, plan, preview_diff, run_id, log,
+                pre_analysis.report, options, route,
+            )
+            log(f"Validation: {test_status} — {validation_result.command or 'no targeted tests selected'}")
+
         # Store plan + pre-computed diff for accept/reject — do NOT write files yet
-        self._pending_plans[project.id] = (plan, preview_diff, run_id)
-        self._set_run_status(run_id, "awaiting_review", log)
+        self._pending_plans[project.id] = (plan, preview_diff, run_id, test_status)
+        self._set_run_status(run_id, "awaiting_review", log, test_status=test_status)
         log("Awaiting your review — Accept or Reject the changes")
 
         return PatchResult(
@@ -462,7 +482,7 @@ class AgentOrchestrator:
             plan=plan,
             git_diff=preview_diff,
             analysis=pre_analysis,
-            test_run=None,
+            test_run=validation_result,
             attempts_used=attempts_used,
             pending_review=True,
             retrieval_mode=retrieval_mode,
@@ -579,6 +599,82 @@ class AgentOrchestrator:
         )
         return "hybrid", bundle, relevant_files, route, options
 
+    def _run_validation(
+        self,
+        project,
+        story: UserStory,
+        plan: PatchPlan,
+        preview_diff: str,
+        run_id: str | None,
+        log: Callable[[str], None],
+        static_analysis_report: str,
+        options: ExecutionOptions | None,
+        route: RouteDecision | None,
+    ) -> tuple[PatchPlan, str, str, TestRunResult]:
+        """Disposable-workspace validation with bounded repair (F5.3/5.5/5.7).
+
+        Reference source is never modified; every repair invocation is
+        persisted against the same run. Returns (plan, test_status,
+        preview_diff, result).
+        """
+        from agent.validation import (
+            ValidationService,
+            build_failure_context,
+        )
+
+        self._set_run_status(run_id, "validating", log, test_status="validating")
+        service = ValidationService(
+            self.test_runner,
+            self.store,
+            max_repair_attempts=self.config.max_repair_attempts,
+            fallback=self.config.test_selection_fallback,
+        )
+        routing_reason = route.reason if route else "default configured provider/model"
+        result = service.validate(project, plan)
+        log(f"Validation attempt: {result.command or 'no targeted tests selected'} -> exit {result.exit_code}")
+
+        attempts = 0
+        while result.failed and attempts < self.config.max_repair_attempts:
+            attempts += 1
+            log(f"Validation FAILED — repair attempt {attempts}/{self.config.max_repair_attempts}")
+            ctx = build_failure_context(
+                story.id, plan.summary, preview_diff, result,
+                static_analysis_report, attempts,
+            )
+            repair_trace = {
+                "provider": getattr(self.generation_provider, "provider_name", ""),
+                "model": getattr(self.generation_provider, "model_identity", ""),
+                "count_method": "estimate:chars/4",
+                "estimated_input_tokens": None,
+                "effective_input_budget": None,
+                "threshold_result": None,
+                "reduction_outcome": f"repair attempt {attempts}",
+                "routing_reason": routing_reason,
+                "selected_context": None,
+            }
+            try:
+                fix_proposal = self.generation_provider.generate_fix_plan(
+                    ctx, log, options=options
+                )
+                usage = getattr(self.generation_provider, "last_usage", None)
+                self._record_llm_invocation(
+                    run_id, log, status="ok", usage=usage, finops=repair_trace
+                )
+                plan = self.materializer.materialize(project, fix_proposal)
+            except Exception as exc:
+                self._record_llm_invocation(
+                    run_id, log, status="failed",
+                    error=f"repair failed: {exc}", finops=repair_trace,
+                )
+                log(f"Repair proposal failed: {exc}")
+                break
+            preview_diff = self._preview_diff(project, plan)
+            result = service.validate(project, plan)
+            log(f"Repair retest: {result.command or 'no targeted tests selected'} -> exit {result.exit_code}")
+
+        test_status = "passed" if not result.failed else "failed"
+        return plan, test_status, preview_diff, result
+
     def _set_run_route(
         self,
         run_id: str | None,
@@ -635,11 +731,17 @@ class AgentOrchestrator:
             log(f"Run persistence skipped: {exc}")
             return None
 
-    def _set_run_status(self, run_id: str | None, status: str, log: Callable[[str], None]) -> None:
+    def _set_run_status(
+        self,
+        run_id: str | None,
+        status: str,
+        log: Callable[[str], None],
+        test_status: str | None = None,
+    ) -> None:
         if run_id is None or self.store is None:
             return
         try:
-            self.store.update_run_status(run_id, status)
+            self.store.update_run_status(run_id, status, test_status=test_status)
         except Exception as exc:
             log(f"Run status update skipped: {exc}")
 
