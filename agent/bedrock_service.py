@@ -101,6 +101,25 @@ class BedrockService:
 
     # ------------------------------------------------------------------ public
 
+    def build_prompt(
+        self,
+        project: ProjectConfig,
+        story: UserStory,
+        relevant_files: list[tuple[str, str]],  # (path, full_content)
+        static_analysis: str,
+        validation_feedback: str = "",
+    ) -> str:
+        context = self.prompt_guard.build_prompt(
+            project, story, relevant_files, static_analysis, validation_feedback
+        )
+        return (
+            self._SYSTEM_PROMPT
+            + "\n\n"
+            + context.prompt
+            + "\n\n"
+            + _SCHEMA_HINT
+        )
+
     def generate_patch_plan(
         self,
         project: ProjectConfig,

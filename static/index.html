@@ -258,6 +258,7 @@
         <div class="tab" onclick="tab('analysis')">Static Analysis</div>
         <div class="tab" onclick="tab('files')">Files Changed</div>
         <div class="tab" onclick="tab('context')">Why this context?</div>
+        <div class="tab" onclick="tab('finops')">FinOps</div>
       </div>
       <div id="tb-diff" class="tab-body active">
         <div class="empty"><svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--border)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v14"/><path d="m9 6-3 3 3 3"/><path d="m15 18 3-3-3-3"/><circle cx="7" cy="3" r="2"/><circle cx="17" cy="21" r="2"/></svg><span>No diff yet — run the agent first</span></div>
@@ -270,6 +271,9 @@
       </div>
       <div id="tb-context" class="tab-body">
         <div class="empty"><svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--border)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg><span>No context yet — run the agent or use Preview Context</span></div>
+      </div>
+      <div id="tb-finops" class="tab-body">
+        <div class="empty"><svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--border)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v12"/><path d="m8 12 4 4 4-4"/></svg><span>No FinOps trace yet — run the agent first</span></div>
       </div>
     </div>
 
@@ -883,8 +887,56 @@ function renderResults(r) {
 
   // Why this context? — rendered beside Diff (same context as generation input)
   renderContext(r.context);
+  renderFinOps(r.project_id);
 
   tab('diff');
+}
+
+// ─── FinOps trace (F3.8) ──────────────────────────────────────────────────────
+function renderFinOps(projectId) {
+  const el = document.getElementById('tb-finops');
+  if (!projectId) { el.innerHTML = `<div class="empty"><span>No FinOps trace yet</span></div>`; return; }
+  fetch(`/api/agent/runs?limit=10`, { headers: { 'Accept': 'application/json' } })
+    .then(res => res.json())
+    .then(entries => {
+      const entry = (entries || []).find(e => e.run && e.run.project_id === projectId);
+      const inv = entry && entry.invocations && entry.invocations.length
+        ? entry.invocations[entry.invocations.length - 1] : null;
+      if (!inv) {
+        el.innerHTML = `<div class="empty"><span>No FinOps trace persisted for this run</span></div>`;
+        return;
+      }
+      const fmt = v => v == null ? '—' : (typeof v === 'number' ? v.toLocaleString() : String(v));
+      const row = (label, value, extra) =>
+        `<div style="display:flex;gap:8px;align-items:baseline"><span style="width:220px;color:var(--text-dim);font-size:12px">${label}</span><b style="color:var(--text)">${fmt(value)}</b>${extra||''}</div>`;
+      const thrBadge = inv.threshold_result === 'ok'
+        ? `<span class="badge bs">ALLOW</span>`
+        : inv.threshold_result === 'over'
+        ? `<span class="badge bw">OVER</span>`
+        : `<span class="badge bw">${fmt(inv.threshold_result)}</span>`;
+      el.innerHTML = `
+        <div class="ctx-summary">
+          ${thrBadge}
+          <span style="color:var(--text-dim)">Provider: <b style="color:var(--text)">${fmt(inv.provider)}</b></span>
+          <span style="color:var(--text-dim)">Model: <b style="color:var(--text)">${fmt(inv.model)}</b></span>
+          <span style="color:var(--text-dim)">Status: <b style="color:var(--text)">${fmt(inv.status)}</b></span>
+          <span style="flex:1"></span>
+        </div>
+        <div class="ctx-summary" style="border-bottom:1px solid var(--border);display:block;padding:8px 0">
+          ${row('Count method', inv.count_method)}
+          ${row('Estimated input tokens', inv.estimated_input_tokens)}
+          ${row('Effective input budget', inv.effective_input_budget)}
+          ${row('Threshold result', inv.threshold_result)}
+          ${row('Reduction outcome', inv.reduction_outcome)}
+          ${row('Max output tokens', inv.max_output_tokens)}
+          ${row('Estimated max cost (USD)', inv.estimated_max_cost)}
+          ${row('Actual usage (in/out/total)', inv.prompt_tokens != null ? `${fmt(inv.prompt_tokens)} / ${fmt(inv.completion_tokens)} / ${fmt(inv.total_tokens)}` : '—')}
+          ${row('Actual operational cost (USD)', inv.actual_operational_cost_estimate)}
+          ${row('Routing reason', inv.routing_reason)}
+        </div>
+        <div style="padding:6px 0;font-size:11px;color:var(--text-dim)">Prompt hash: <code>${fmt(inv.prompt_hash)}</code></div>`;
+    })
+    .catch(() => { el.innerHTML = `<div class="empty"><span>FinOps trace unavailable</span></div>`; });
 }
 
 function renderDiff(text) {

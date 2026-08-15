@@ -137,6 +137,8 @@ def _generation_http_exception(exc: ValueError) -> HTTPException:
     detail = str(exc)
     if detail in _GENERATION_VALIDATION_ERRORS:
         return HTTPException(status_code=422, detail=detail)
+    if detail.startswith("FINOPS_STOP"):
+        return HTTPException(status_code=429, detail=detail)
     if detail.startswith(("Project not found:", "Story not found:")):
         return HTTPException(status_code=404, detail=detail)
     return HTTPException(status_code=500, detail="Generation failed")

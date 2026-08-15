@@ -29,6 +29,21 @@ class ProviderCapabilities:
 
 
 class GenerationProvider(Protocol):
+    def build_prompt(
+        self,
+        project: ProjectConfig,
+        story: UserStory,
+        relevant_files: list[tuple[str, str]],
+        static_analysis: str,
+        validation_feedback: str = "",
+    ) -> str:
+        """Build the exact final prompt representation that will be sent.
+
+        F3 counts THIS representation (not context estimates); the count
+        method and budget are evaluated before any provider call.
+        """
+        ...
+
     def generate_patch_plan(
         self,
         project: ProjectConfig,

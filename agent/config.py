@@ -60,6 +60,16 @@ class AgentConfig(BaseModel):
     hybrid_retrieval_top_k: int = 10   # ranked symbols considered for context
     hybrid_context_budget: int | None = None  # simulated F2 token budget (F3 replaces)
 
+    # F3 FinOps guardrail: per-invocation input/context limits and pricing.
+    # effective_input_budget = min(ticket, project, model limits). None = no limit.
+    finops_ticket_token_limit: int | None = None
+    finops_project_token_limit: int | None = None
+    finops_model_token_limit: int | None = None
+    finops_max_reduction_rounds: int = 3
+    # pricing[provider][model_id] = {input_per_million, output_per_million}
+    # Configured prices are the only source of cost estimates.
+    finops_pricing: dict = {}
+
     def project_by_id(self, project_id: str) -> ProjectConfig:
         target_id = project_id or self.active_project
         if not target_id and self.projects:
@@ -88,6 +98,7 @@ class AzureConfig(BaseModel):
     deployment: str = ""
     embedding_deployment: str = ""
     embedding_dimensions: int | None = None
+    max_output_tokens: int | None = None
 
 
 class OpenAiConfig(BaseModel):  # kept for backward-compat, unused when Bedrock is active
@@ -136,6 +147,7 @@ class Settings(BaseModel):
                 deployment=required["AZURE_OPENAI_DEPLOYMENT"].strip(),
                 embedding_deployment=required["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"].strip(),
                 embedding_dimensions=_int_env("AZURE_EMBEDDING_DIMENSIONS"),
+                max_output_tokens=_int_env("AZURE_MAX_OUTPUT_TOKENS"),
             )
 
         bd = data.get("bedrock", {})
@@ -154,7 +166,6 @@ class Settings(BaseModel):
             **agent_data,
             projects=[ProjectConfig(**p) for p in projects_data],
         )
-
         db_data: dict = dict(data.get("database", {}))
         db_url = os.getenv("DATABASE_URL") or str(db_data.get("url", "") or "")
         database_cfg = DatabaseConfig(url=SecretStr(db_url))
