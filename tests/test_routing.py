@@ -63,6 +63,18 @@ def test_complexity_never_user_editable():
     assert compute_complexity("x", {"items": []}, []) == ("LOW", 1)
 
 
+def test_complexity_counts_generic_modules():
+    retrieval = {
+        "items": [
+            {"module": "customer-service"},
+            {"module": "billing-module"},
+            {"module": "foo"},
+        ],
+        "counts": {"graph_neighbors": 0},
+    }
+    assert compute_complexity("x", retrieval, []) == ("MEDIUM", 2)
+
+
 def test_acceptance_a_priority_changes_route_only():
     """Same ticket/evidence/complexity; only priority changes."""
     overrides = {"azure": {"strong": "dep-strong", "economical": "dep-econ"}}

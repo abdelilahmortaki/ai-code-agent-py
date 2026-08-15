@@ -61,11 +61,19 @@ def compute_complexity(
     relevant_symbols = len(items)
     graph_breadth = int(counts.get("graph_neighbors", 0) or 0)
 
-    modules: set[str] = set()
-    for path in selected_files or []:
-        parts = path.split("/")
-        if parts and parts[0].startswith("shoppoc-"):
-            modules.add(parts[0])
+    modules: set[str] = {
+        str(item.get("module"))
+        for item in items
+        if isinstance(item, dict) and item.get("module")
+    }
+    if not modules:
+        # Fallback for callers that only have paths: Maven modules are the
+        # first repo-relative segment, regardless of product/project name.
+        modules.update(
+            parts[0]
+            for path in selected_files or []
+            if (parts := path.replace("\\", "/").split("/")) and parts[0]
+        )
     modules_count = len(modules)
 
     api_impact = bool(_API_HINTS.search(story_text))
