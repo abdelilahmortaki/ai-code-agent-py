@@ -19,8 +19,8 @@
 
 ## Local evidence
 
-- `canonical-merged-dev-0139dde-core.json`
-- `fail-probe-merged-dev-0139dde.json`
+- `canonical-merged-dev-86068bc.json`
+- `fail-probe-merged-dev-86068bc.json`
 - `f2-retrieval-benchmark.json` and `.md`
 - `bom-upload-0139dde.json`
 - `ui/finops-routing.png`, `ui/validation.png`, `ui/acceptance-review.png`
