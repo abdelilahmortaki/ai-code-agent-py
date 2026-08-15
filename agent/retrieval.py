@@ -326,7 +326,7 @@ class HybridRetrievalService:
         # Candidate pool is wider than the returned top_k so lexical + vector
         # + graph fusion ranks from a generous set instead of being starved to
         # exactly top_k candidates per source.
-        pool_size = min(_MAX_POOL_SIZE, max(top_k * 3, max_related, 10))
+        pool_size = min(_MAX_POOL_SIZE, max(top_k * 5, max_related, 10))
 
         candidates: dict[str, dict] = {}
         lexical_candidate_ids: set[str] = set()
