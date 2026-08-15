@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -97,8 +98,18 @@ def test_targeted_tests_naming_convention(tmp_path):
 def test_maven_argv_targeted_vs_none():
     project = _project("/tmp/nonexistent")
     argv = build_maven_argv(project, ["MoneyTest", "ProductTest"])
-    assert argv == ["mvn", "-q", "-Dtest=MoneyTest,ProductTest", "test"]
-    assert build_maven_argv(project, []) == ["mvn", "-q", "verify"]
+    assert argv == [
+        "mvn.cmd" if os.name == "nt" else "mvn",
+        "-q",
+        "-Dtest=MoneyTest,ProductTest",
+        "-DfailIfNoTests=false",
+        "test",
+    ]
+    assert build_maven_argv(project, []) == [
+        "mvn.cmd" if os.name == "nt" else "mvn",
+        "-q",
+        "verify",
+    ]
 
 
 def test_maven_fallback_honors_configured_verify_command():
@@ -125,7 +136,7 @@ def test_validation_never_synthesizes_pass_for_empty_selection(tmp_path):
 
     runner = Runner()
     result = ValidationService(runner, fallback="none").validate(project, plan)
-    assert runner.calls and runner.calls[0][1] == "mvn -q verify"
+    assert runner.calls and runner.calls[0][1] == f"{('mvn.cmd' if os.name == 'nt' else 'mvn')} -q verify"
     assert result.executed and result.strategy == "fallback" and result.exit_code == 7
 
 

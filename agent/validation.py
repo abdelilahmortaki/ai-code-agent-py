@@ -15,6 +15,7 @@ Targeted test selection:
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import tempfile
@@ -107,8 +108,15 @@ def build_maven_argv(project: ProjectConfig, tests: list[str]) -> list[str]:
     tests exist, ``verify`` runs; a configured command containing ``verify``
     is honored as the repository-defined variant.
     """
+    executable = "mvn.cmd" if os.name == "nt" else "mvn"
     if tests:
-        return ["mvn", "-q", f"-Dtest={','.join(tests)}", "test"]
+        return [
+            executable,
+            "-q",
+            f"-Dtest={','.join(tests)}",
+            "-DfailIfNoTests=false",
+            "test",
+        ]
     from agent.safe_runner import split_command
 
     configured = (project.test_command or "").strip()
@@ -118,8 +126,10 @@ def build_maven_argv(project: ProjectConfig, tests: list[str]) -> list[str]:
         except ValueError:
             configured_argv = []
         if "verify" in configured_argv:
+            if os.name == "nt" and configured_argv[0].casefold() == "mvn":
+                configured_argv[0] = executable
             return configured_argv
-    return ["mvn", "-q", "verify"]
+    return [executable, "-q", "verify"]
 
 
 class ValidationWorkspace:
