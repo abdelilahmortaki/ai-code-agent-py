@@ -1,16 +1,16 @@
 {
-  "timestamp": "2026-08-15T03:43:18.376273+00:00",
+  "timestamp": "2026-08-15T12:54:22.968460+00:00",
   "branch": "dev",
-  "head": "86bb9582ed4249935d658b384bfdf068724dd8da",
-  "project_id": "upload-1786765281",
-  "project_name": "shoppoc-final-canonical",
+  "head": "86068bc6b362c8d1c9505f7a6f23ff561f6e6071",
+  "project_id": "upload-1786798106",
+  "project_name": "v1-merged-dev-fail-20260815",
   "target_relative_path": "shoppoc-shared/src/main/java/com/shoppoc/shared/error/DomainError.java",
   "search_term": "DomainError",
   "before_sha256": "1b7f807f0db58a1562dc28fe6a754bd1981daa94aaf3f55118637f1f485e243b",
   "provider": "azure",
   "generation_deployment": "gpt-5-mini",
   "embedding_deployment": "text-embedding-3-large",
-  "version_id": "1a4dc0ac-ab48-4c60-a610-535593f1244a",
+  "version_id": "23f76b0b-55b9-4738-a1cc-aebae923e64e",
   "checks": [
     {
       "category": "provenance",
@@ -58,7 +58,7 @@
       "category": "migrations",
       "name": "applied",
       "status": "PASS",
-      "description": "schema migrations are applied (9 rows)"
+      "description": "schema migrations are applied (10 rows)"
     },
     {
       "category": "database",
@@ -163,25 +163,25 @@
       "description": "an indexed project version is available"
     },
     {
-      "category": "search",
+      "category": "lexical",
       "name": "lexical-http",
       "status": "PASS",
       "description": "configured lexical search responds with HTTP 200"
     },
     {
-      "category": "search",
+      "category": "lexical",
       "name": "lexical-results",
       "status": "PASS",
       "description": "lexical retrieval returns useful indexed results"
     },
     {
-      "category": "search",
+      "category": "lexical",
       "name": "target-result",
       "status": "PASS",
       "description": "lexical retrieval includes the configured target file or symbol"
     },
     {
-      "category": "search",
+      "category": "lexical",
       "name": "graph-seed",
       "status": "PASS",
       "description": "a deterministic useful lexical result provides a graph seed"
@@ -253,258 +253,97 @@
       "description": "context bundle lists selected complete files"
     },
     {
+      "category": "vector/hybrid",
+      "name": "hybrid-evidence",
+      "status": "PASS",
+      "description": "context preview carries vector/hybrid retrieval evidence"
+    },
+    {
       "category": "finops",
       "name": "provider-boundary",
       "status": "PASS",
       "description": "Azure provider reports usage, no exact token counting, and count_tokens=None"
     },
     {
-      "category": "generation",
-      "name": "first-http",
+      "category": "validation",
+      "name": "fail-probe-http",
       "status": "PASS",
-      "description": "first Azure generation responds with HTTP 200"
-    },
-    {
-      "category": "generation",
-      "name": "first-exact-diff",
-      "status": "PASS",
-      "description": "first proposal is the exact one-line business replacement"
-    },
-    {
-      "category": "immutable",
-      "name": "first-pending",
-      "status": "PASS",
-      "description": "source remains unchanged while first proposal is pending"
-    },
-    {
-      "category": "persistence",
-      "name": "runs-http-Update not-found error code [20260815-034256365-7adbacd3-first-1]",
-      "status": "PASS",
-      "description": "run listing responds for 'Update not-found error code [20260815-034256365-7adbacd3-first-1]'"
-    },
-    {
-      "category": "persistence",
-      "name": "run-unique-Update not-found error code [20260815-034256365-7adbacd3-first-1]",
-      "status": "PASS",
-      "description": "exactly one persisted run matches the unique story title"
-    },
-    {
-      "category": "persistence",
-      "name": "first-awaiting-review",
-      "status": "PASS",
-      "description": "first persisted run is P3, awaiting_review, and incomplete"
-    },
-    {
-      "category": "persistence",
-      "name": "first-invocation",
-      "status": "PASS",
-      "description": "first linked latest LLM invocation is ok, Azure, and has a deployment/model"
+      "description": "failing-validation generation responds (200)"
     },
     {
       "category": "validation",
-      "name": "test-run",
+      "name": "fail-probe-test-status",
       "status": "PASS",
-      "description": "disposable validation produced a TestRunResult"
+      "description": "validation FAILED as expected (failed)"
+    },
+    {
+      "category": "repair",
+      "name": "invoked",
+      "status": "PASS",
+      "description": "bounded repair invocations persisted (2)"
+    },
+    {
+      "category": "repair",
+      "name": "bounded",
+      "status": "PASS",
+      "description": "repair attempts are bounded"
+    },
+    {
+      "category": "repair",
+      "name": "finops-token-budget",
+      "status": "PASS",
+      "description": "every repair invocation has token count, method, and threshold trace"
+    },
+    {
+      "category": "repair",
+      "name": "finops-budget-cost",
+      "status": "PASS",
+      "description": "every repair invocation has output budget and estimated max cost"
+    },
+    {
+      "category": "repair",
+      "name": "usage",
+      "status": "PASS",
+      "description": "every successful repair invocation persists Azure usage and actual cost"
+    },
+    {
+      "category": "repair",
+      "name": "failed-trace",
+      "status": "PASS",
+      "description": "failed repair provider calls persist status and error"
+    },
+    {
+      "category": "repair",
+      "name": "attempt-numbers",
+      "status": "PASS",
+      "description": "every repair invocation records a bounded attempt number"
+    },
+    {
+      "category": "repair",
+      "name": "same-run",
+      "status": "PASS",
+      "description": "every repair invocation remains attached to the failing run"
     },
     {
       "category": "validation",
-      "name": "test-status",
+      "name": "validation-required-gate",
       "status": "PASS",
-      "description": "run test_status is recorded"
-    },
-    {
-      "category": "finops",
-      "name": "count-method",
-      "status": "PASS",
-      "description": "FinOps count method is persisted"
-    },
-    {
-      "category": "finops",
-      "name": "estimated-input-tokens",
-      "status": "PASS",
-      "description": "estimated input tokens are persisted"
-    },
-    {
-      "category": "finops",
-      "name": "usage-persisted",
-      "status": "PASS",
-      "description": "actual Azure input/output token usage is persisted"
-    },
-    {
-      "category": "finops",
-      "name": "routing-reason",
-      "status": "PASS",
-      "description": "routing reason is persisted"
-    },
-    {
-      "category": "finops",
-      "name": "threshold-result",
-      "status": "PASS",
-      "description": "threshold result is persisted"
-    },
-    {
-      "category": "finops",
-      "name": "cost-estimate",
-      "status": "PASS",
-      "description": "pre-call estimated max cost and post-call actual cost are persisted"
-    },
-    {
-      "category": "routing",
-      "name": "complexity-label",
-      "status": "PASS",
-      "description": "deterministic complexity label is persisted on the run"
-    },
-    {
-      "category": "routing",
-      "name": "applied-route",
-      "status": "PASS",
-      "description": "applied route (profile / graph depth / max output tokens) is persisted"
-    },
-    {
-      "category": "routing",
-      "name": "route-reason",
-      "status": "PASS",
-      "description": "routing reason is persisted and deterministic"
+      "description": "accept before PASS returns 409 VALIDATION_REQUIRED"
     },
     {
       "category": "reject",
-      "name": "first-http",
+      "name": "fail-probe-reject",
       "status": "PASS",
-      "description": "first pending plan is rejected through the real API"
+      "description": "failing-validation proposal is rejected"
     },
     {
       "category": "immutable",
-      "name": "after-reject",
+      "name": "fail-probe-immutable",
       "status": "PASS",
-      "description": "source SHA is unchanged after first Reject"
-    },
-    {
-      "category": "reject",
-      "name": "first-runs-http",
-      "status": "PASS",
-      "description": "run listing remains available after first reject"
-    },
-    {
-      "category": "reject",
-      "name": "first-terminal",
-      "status": "PASS",
-      "description": "first run is completed with human_decision=rejected"
-    },
-    {
-      "category": "generation",
-      "name": "second-http",
-      "status": "PASS",
-      "description": "second Azure generation responds with HTTP 200"
-    },
-    {
-      "category": "generation",
-      "name": "second-exact-diff",
-      "status": "PASS",
-      "description": "second proposal is the exact one-line business replacement"
-    },
-    {
-      "category": "immutable",
-      "name": "second-pending",
-      "status": "PASS",
-      "description": "source remains unchanged while second proposal is pending"
-    },
-    {
-      "category": "persistence",
-      "name": "runs-http-Update not-found error code [20260815-034256365-7adbacd3-second-1]",
-      "status": "PASS",
-      "description": "run listing responds for 'Update not-found error code [20260815-034256365-7adbacd3-second-1]'"
-    },
-    {
-      "category": "persistence",
-      "name": "run-unique-Update not-found error code [20260815-034256365-7adbacd3-second-1]",
-      "status": "PASS",
-      "description": "exactly one persisted run matches the unique story title"
-    },
-    {
-      "category": "persistence",
-      "name": "second-awaiting-review",
-      "status": "PASS",
-      "description": "second persisted run is P3, awaiting_review, and incomplete"
-    },
-    {
-      "category": "persistence",
-      "name": "second-invocation",
-      "status": "PASS",
-      "description": "second linked latest LLM invocation is ok, Azure, and has a deployment/model"
-    },
-    {
-      "category": "immutable",
-      "name": "before-accept",
-      "status": "PASS",
-      "description": "source SHA is original immediately before Accept"
-    },
-    {
-      "category": "accept",
-      "name": "http",
-      "status": "PASS",
-      "description": "second pending plan is accepted through the real API"
-    },
-    {
-      "category": "accept",
-      "name": "sha-changed",
-      "status": "PASS",
-      "description": "source SHA changes after Accept"
-    },
-    {
-      "category": "accept",
-      "name": "no-pending-plan",
-      "status": "PASS",
-      "description": "no pending plan remains after Accept"
-    },
-    {
-      "category": "accept",
-      "name": "exact-content",
-      "status": "PASS",
-      "description": "final content equals the original with exactly one configured replacement"
-    },
-    {
-      "category": "accept",
-      "name": "semantic-replacement",
-      "status": "PASS",
-      "description": "only NOT_FOUND is replaced by RESOURCE_NOT_FOUND"
-    },
-    {
-      "category": "accept",
-      "name": "runs-http",
-      "status": "PASS",
-      "description": "run listing remains available after Accept"
-    },
-    {
-      "category": "accept",
-      "name": "terminal",
-      "status": "PASS",
-      "description": "second run is completed with human_decision=accepted"
+      "description": "reference source is unchanged after failed validation + reject"
     }
   ],
-  "generation_attempt_results": [
-    {
-      "lifecycle": "first",
-      "attempt": 1,
-      "http_status": 200,
-      "outcome": "exact",
-      "detail": "",
-      "plan_file_count": 1,
-      "diff_file_count": 1,
-      "added_line_count": 1,
-      "removed_line_count": 1
-    },
-    {
-      "lifecycle": "second",
-      "attempt": 1,
-      "http_status": 200,
-      "outcome": "exact",
-      "detail": "",
-      "plan_file_count": 1,
-      "diff_file_count": 1,
-      "added_line_count": 1,
-      "removed_line_count": 1
-    }
-  ],
+  "generation_attempt_results": [],
   "runtime_overall": "PASS",
   "overall_result": "PASS"
 }

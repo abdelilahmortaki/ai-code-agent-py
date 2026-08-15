@@ -1,0 +1,597 @@
+{
+  "project_id": "upload-1786790897",
+  "retrieval": {
+    "top_k": 10,
+    "graph_depth": 1
+  },
+  "cases_total": 13,
+  "cases_passed": 13,
+  "result": "PASS",
+  "cases": [
+    {
+      "case_id": "S1",
+      "dimension": "exact-class",
+      "problem": "Admin product create endpoint returns 500; trace the controller handling POST /api/v1/admin/products",
+      "expected_file": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/web/AdminProductController.java",
+      "expected_symbol": "com.shoppoc.catalog.infrastructure.web.AdminProductController",
+      "legacy_top_results": [
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/web/AdminProductController.java",
+        "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/AdminProductControllerTest.java",
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/web/ProductController.java",
+        "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/ProductControllerTest.java",
+        "shoppoc-order/src/main/java/com/shoppoc/order/infrastructure/web/AdminOrderController.java"
+      ],
+      "legacy_expected_rank": 1,
+      "hybrid_top_symbols": [
+        {
+          "qualified_name": "com.shoppoc.catalog.infrastructure.web.AdminProductController",
+          "symbol_type": "class",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/web/AdminProductController.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.infrastructure.web.AdminProductControllerTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/AdminProductControllerTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.infrastructure.web.AdminProductController.create",
+          "symbol_type": "method",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/web/AdminProductController.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.infrastructure.web.AdminProductControllerTest.createReturnsBadRequestWhenInvalid",
+          "symbol_type": "method",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/AdminProductControllerTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.infrastructure.web.AdminProductControllerTest.createReturnsCreated",
+          "symbol_type": "method",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/AdminProductControllerTest.java"
+        }
+      ],
+      "hybrid_expected_rank": 1,
+      "pass": true,
+      "explanation": "hybrid found expected in top-10 at rank 1"
+    },
+    {
+      "case_id": "S2",
+      "dimension": "exact-method",
+      "problem": "createProduct silently skips the SKU uniqueness check and stores duplicates",
+      "expected_file": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/application/CatalogApplicationService.java",
+      "expected_symbol": "com.shoppoc.catalog.application.CatalogApplicationService.createProduct",
+      "legacy_top_results": [
+        "shoppoc-catalog/src/test/java/com/shoppoc/catalog/application/CatalogApplicationServiceCreateProductTest.java",
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/config/CatalogLocalDataSeeder.java",
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/application/CatalogApplicationService.java",
+        "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/AdminProductControllerTest.java",
+        "shoppoc-catalog/src/test/java/com/shoppoc/catalog/domain/ProductTest.java"
+      ],
+      "legacy_expected_rank": 3,
+      "hybrid_top_symbols": [
+        {
+          "qualified_name": "com.shoppoc.catalog.application.CatalogApplicationService.createProduct",
+          "symbol_type": "method",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/application/CatalogApplicationService.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.application.CatalogApplicationServiceCreateProductTest.createProductDuplicateSkuThrowsBusinessException",
+          "symbol_type": "method",
+          "file_path": "shoppoc-catalog/src/test/java/com/shoppoc/catalog/application/CatalogApplicationServiceCreateProductTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.application.CatalogApplicationServiceCreateProductTest.createProductSuccess",
+          "symbol_type": "method",
+          "file_path": "shoppoc-catalog/src/test/java/com/shoppoc/catalog/application/CatalogApplicationServiceCreateProductTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.application.CreateProductCommand.CreateProductCommand",
+          "symbol_type": "constructor",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/application/CreateProductCommand.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.application.CreateProductUseCase.createProduct",
+          "symbol_type": "method",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/application/CreateProductUseCase.java"
+        }
+      ],
+      "hybrid_expected_rank": 1,
+      "pass": true,
+      "explanation": "hybrid found expected in top-10 at rank 1"
+    },
+    {
+      "case_id": "S3",
+      "dimension": "error-code",
+      "problem": "Change the NOT_FOUND error code constant to RESOURCE_NOT_FOUND in the shared domain error type",
+      "expected_file": "shoppoc-shared/src/main/java/com/shoppoc/shared/error/DomainError.java",
+      "expected_symbol": "com.shoppoc.shared.error.DomainError.notFound",
+      "legacy_top_results": [
+        "shoppoc-shared/src/main/java/com/shoppoc/shared/error/NotFoundException.java",
+        "shoppoc-shared/src/main/java/com/shoppoc/shared/error/DomainError.java",
+        "shoppoc-shared/src/main/java/com/shoppoc/shared/error/BusinessException.java",
+        "shoppoc-order/src/main/java/com/shoppoc/order/notification/domain/NotificationType.java",
+        "shoppoc-app/src/main/java/com/shoppoc/app/web/GlobalExceptionHandler.java"
+      ],
+      "legacy_expected_rank": 2,
+      "hybrid_top_symbols": [
+        {
+          "qualified_name": "com.shoppoc.shared.error.DomainError.notFound",
+          "symbol_type": "method",
+          "file_path": "shoppoc-shared/src/main/java/com/shoppoc/shared/error/DomainError.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.app.web.GlobalExceptionHandlerTest.TestController.notFound",
+          "symbol_type": "method",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/app/web/GlobalExceptionHandlerTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.shared.error.NotFoundException.NotFoundException",
+          "symbol_type": "constructor",
+          "file_path": "shoppoc-shared/src/main/java/com/shoppoc/shared/error/NotFoundException.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.shared.error.DomainError",
+          "symbol_type": "class",
+          "file_path": "shoppoc-shared/src/main/java/com/shoppoc/shared/error/DomainError.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.shared.error.NotFoundException",
+          "symbol_type": "class",
+          "file_path": "shoppoc-shared/src/main/java/com/shoppoc/shared/error/NotFoundException.java"
+        }
+      ],
+      "hybrid_expected_rank": 1,
+      "pass": true,
+      "explanation": "hybrid found expected in top-10 at rank 1"
+    },
+    {
+      "case_id": "S4",
+      "dimension": "semantic-description",
+      "problem": "Order listing should only return orders belonging to the signed-in user; implement the current-user query",
+      "expected_file": "shoppoc-order/src/main/java/com/shoppoc/order/application/OrderApplicationService.java",
+      "expected_symbol": "com.shoppoc.order.application.OrderApplicationService.listCurrentUserOrders",
+      "legacy_top_results": [
+        "shoppoc-order/src/main/java/com/shoppoc/order/application/ListCurrentUserOrdersUseCase.java",
+        "shoppoc-order/src/main/java/com/shoppoc/order/application/OrderApplicationService.java",
+        "shoppoc-app/src/test/java/com/shoppoc/app/security/AdminOrderVisibilityIntegrationTest.java",
+        "shoppoc-order/src/test/java/com/shoppoc/order/application/OrderApplicationServiceAdminTest.java",
+        "shoppoc-order/src/test/java/com/shoppoc/order/infrastructure/persistence/JpaOrderRepositoryAdapterTest.java"
+      ],
+      "legacy_expected_rank": 2,
+      "hybrid_top_symbols": [
+        {
+          "qualified_name": "com.shoppoc.order.domain.Order",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/domain/Order.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.application.OrderApplicationServiceAdminTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/test/java/com/shoppoc/order/application/OrderApplicationServiceAdminTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.domain.OrderStatus",
+          "symbol_type": "enum",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/domain/OrderStatus.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.application.OrderApplicationService",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/application/OrderApplicationService.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.domain.OrderId",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/domain/OrderId.java"
+        }
+      ],
+      "hybrid_expected_rank": 4,
+      "pass": true,
+      "explanation": "hybrid found expected in top-10 at rank 4"
+    },
+    {
+      "case_id": "S5",
+      "dimension": "controller-service",
+      "problem": "Creating an order needs product prices at checkout time; the order service must ask the catalog",
+      "expected_file": "shoppoc-order/src/main/java/com/shoppoc/order/application/OrderApplicationService.java",
+      "expected_symbol": "com.shoppoc.order.application.OrderApplicationService.createOrder",
+      "legacy_top_results": [
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/application/CatalogApplicationService.java",
+        "shoppoc-order/src/test/java/com/shoppoc/order/application/OrderApplicationServiceTest.java",
+        "shoppoc-order/src/main/java/com/shoppoc/order/application/OrderApplicationService.java",
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/application/CreateProductCommand.java",
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/web/CreateProductRequest.java"
+      ],
+      "legacy_expected_rank": 3,
+      "hybrid_top_symbols": [
+        {
+          "qualified_name": "com.shoppoc.catalog.application.CatalogApplicationServiceCreateProductTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-catalog/src/test/java/com/shoppoc/catalog/application/CatalogApplicationServiceCreateProductTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.domain.Order",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/domain/Order.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.domain.Product",
+          "symbol_type": "class",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/domain/Product.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.application.OrderApplicationService",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/application/OrderApplicationService.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.application.OrderApplicationServiceTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/test/java/com/shoppoc/order/application/OrderApplicationServiceTest.java"
+        }
+      ],
+      "hybrid_expected_rank": 4,
+      "pass": true,
+      "explanation": "hybrid found expected in top-10 at rank 4"
+    },
+    {
+      "case_id": "S6",
+      "dimension": "associated-test",
+      "problem": "Fix the failing admin product controller test after the request validation change",
+      "expected_file": "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/AdminProductControllerTest.java",
+      "expected_symbol": "com.shoppoc.catalog.infrastructure.web.AdminProductController",
+      "legacy_top_results": [
+        "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/AdminProductControllerTest.java",
+        "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/ProductControllerTest.java",
+        "shoppoc-app/src/test/java/com/shoppoc/app/security/AdminOrderVisibilityIntegrationTest.java",
+        "shoppoc-app/src/test/java/com/shoppoc/app/security/SecurityAccessIntegrationTest.java",
+        "shoppoc-app/src/test/java/com/shoppoc/order/infrastructure/web/OrderControllerTest.java"
+      ],
+      "legacy_expected_rank": 1,
+      "hybrid_top_symbols": [
+        {
+          "qualified_name": "com.shoppoc.catalog.infrastructure.web.AdminProductControllerTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/AdminProductControllerTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.infrastructure.web.AdminProductController",
+          "symbol_type": "class",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/web/AdminProductController.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.infrastructure.web.ProductControllerTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/ProductControllerTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.application.OrderApplicationServiceTest.product",
+          "symbol_type": "method",
+          "file_path": "shoppoc-order/src/test/java/com/shoppoc/order/application/OrderApplicationServiceTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.infrastructure.web.AdminOrderControllerTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/order/infrastructure/web/AdminOrderControllerTest.java"
+        }
+      ],
+      "hybrid_expected_rank": 1,
+      "pass": true,
+      "explanation": "hybrid found expected in top-10 at rank 1"
+    },
+    {
+      "case_id": "S7",
+      "dimension": "implements",
+      "problem": "Implement the admin order listing use case on the order service alongside the existing use cases",
+      "expected_file": "shoppoc-order/src/main/java/com/shoppoc/order/application/OrderApplicationService.java",
+      "expected_symbol": "com.shoppoc.order.application.OrderApplicationService.listAllOrders",
+      "legacy_top_results": [
+        "shoppoc-order/src/main/java/com/shoppoc/order/application/AdminListOrdersUseCase.java",
+        "shoppoc-order/src/main/java/com/shoppoc/order/application/OrderApplicationService.java",
+        "shoppoc-order/src/test/java/com/shoppoc/order/application/OrderApplicationServiceAdminTest.java",
+        "shoppoc-order/src/main/java/com/shoppoc/order/infrastructure/web/AdminOrderController.java",
+        "shoppoc-app/src/test/java/com/shoppoc/order/infrastructure/web/AdminOrderControllerTest.java"
+      ],
+      "legacy_expected_rank": 2,
+      "hybrid_top_symbols": [
+        {
+          "qualified_name": "com.shoppoc.order.application.AdminListOrdersUseCase",
+          "symbol_type": "interface",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/application/AdminListOrdersUseCase.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.application.OrderApplicationServiceAdminTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/test/java/com/shoppoc/order/application/OrderApplicationServiceAdminTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.application.OrderApplicationService",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/application/OrderApplicationService.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.infrastructure.web.AdminOrderController",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/infrastructure/web/AdminOrderController.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.infrastructure.web.AdminOrderControllerTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/order/infrastructure/web/AdminOrderControllerTest.java"
+        }
+      ],
+      "hybrid_expected_rank": 3,
+      "pass": true,
+      "explanation": "hybrid found expected in top-10 at rank 3"
+    },
+    {
+      "case_id": "S8",
+      "dimension": "repository",
+      "problem": "Persist payment records through the repository adapter backed by Spring Data",
+      "expected_file": "shoppoc-payment/src/main/java/com/shoppoc/payment/infrastructure/persistence/JpaPaymentRepositoryAdapter.java",
+      "expected_symbol": "com.shoppoc.payment.infrastructure.persistence.JpaPaymentRepositoryAdapter",
+      "legacy_top_results": [
+        "shoppoc-payment/src/main/java/com/shoppoc/payment/infrastructure/persistence/JpaPaymentRepositoryAdapter.java",
+        "shoppoc-payment/src/test/java/com/shoppoc/payment/infrastructure/persistence/JpaPaymentRepositoryAdapterTest.java",
+        "shoppoc-payment/src/main/java/com/shoppoc/payment/infrastructure/persistence/SpringDataPaymentRepository.java",
+        "shoppoc-order/src/test/java/com/shoppoc/order/notification/infrastructure/persistence/JpaNotificationRepositoryAdapterTest.java",
+        "shoppoc-payment/src/main/java/com/shoppoc/payment/domain/PaymentRepository.java"
+      ],
+      "legacy_expected_rank": 1,
+      "hybrid_top_symbols": [
+        {
+          "qualified_name": "com.shoppoc.payment.domain.PaymentRepository",
+          "symbol_type": "interface",
+          "file_path": "shoppoc-payment/src/main/java/com/shoppoc/payment/domain/PaymentRepository.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.payment.infrastructure.persistence.SpringDataPaymentRepository",
+          "symbol_type": "interface",
+          "file_path": "shoppoc-payment/src/main/java/com/shoppoc/payment/infrastructure/persistence/SpringDataPaymentRepository.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.infrastructure.persistence.SpringDataOrderRepository",
+          "symbol_type": "interface",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/infrastructure/persistence/SpringDataOrderRepository.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.payment.application.PaymentApplicationServiceTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-payment/src/test/java/com/shoppoc/payment/application/PaymentApplicationServiceTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.notification.infrastructure.persistence.SpringDataNotificationRepository",
+          "symbol_type": "interface",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/notification/infrastructure/persistence/SpringDataNotificationRepository.java"
+        }
+      ],
+      "hybrid_expected_rank": 7,
+      "pass": true,
+      "explanation": "hybrid found expected in top-10 at rank 7"
+    },
+    {
+      "case_id": "S9",
+      "dimension": "multi-module",
+      "problem": "Checkout needs product lookup; the order module must use the catalog API port",
+      "expected_file": "shoppoc-order/src/main/java/com/shoppoc/order/application/OrderApplicationService.java",
+      "expected_symbol": "com.shoppoc.order.application.OrderApplicationService.createOrder",
+      "legacy_top_results": [
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/api/ProductLookupPort.java",
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/application/CatalogApplicationService.java",
+        "shoppoc-order/src/main/java/com/shoppoc/order/application/OrderApplicationService.java",
+        "shoppoc-order/src/test/java/com/shoppoc/order/application/OrderApplicationServiceTest.java",
+        "shoppoc-app/src/test/java/com/shoppoc/catalog/CatalogLocalSeedDataTest.java"
+      ],
+      "legacy_expected_rank": 3,
+      "hybrid_top_symbols": [
+        {
+          "qualified_name": "com.shoppoc.catalog.api.ProductLookupPort",
+          "symbol_type": "interface",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/api/ProductLookupPort.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.application.CatalogApplicationService",
+          "symbol_type": "class",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/application/CatalogApplicationService.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.domain.Product",
+          "symbol_type": "class",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/domain/Product.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.CatalogLocalSeedDataTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/catalog/CatalogLocalSeedDataTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.application.CatalogApplicationServiceCreateProductTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-catalog/src/test/java/com/shoppoc/catalog/application/CatalogApplicationServiceCreateProductTest.java"
+        }
+      ],
+      "hybrid_expected_rank": 8,
+      "pass": true,
+      "explanation": "hybrid found expected in top-10 at rank 8"
+    },
+    {
+      "case_id": "S10",
+      "dimension": "typo-fuzzy",
+      "problem": "AdmnProductContoller broke after the package rename; find the controller class",
+      "expected_file": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/web/AdminProductController.java",
+      "expected_symbol": "com.shoppoc.catalog.infrastructure.web.AdminProductController",
+      "legacy_top_results": [
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/web/AdminProductController.java",
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/web/ProductController.java",
+        "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/ProductControllerTest.java",
+        "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/AdminProductControllerTest.java",
+        "shoppoc-order/src/main/java/com/shoppoc/order/infrastructure/web/AdminOrderController.java"
+      ],
+      "legacy_expected_rank": 1,
+      "hybrid_top_symbols": [
+        {
+          "qualified_name": "com.shoppoc.catalog.infrastructure.web.AdminProductController",
+          "symbol_type": "class",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/web/AdminProductController.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.infrastructure.web.AdminProductControllerTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/AdminProductControllerTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.architecture.ControllerRulesTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/architecture/ControllerRulesTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.infrastructure.web.ProductControllerTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/catalog/infrastructure/web/ProductControllerTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.infrastructure.web.AdminProductController.AdminProductController",
+          "symbol_type": "constructor",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/web/AdminProductController.java"
+        }
+      ],
+      "hybrid_expected_rank": 1,
+      "pass": true,
+      "explanation": "hybrid found expected in top-10 at rank 1"
+    },
+    {
+      "case_id": "S11",
+      "dimension": "db-impact",
+      "problem": "Add a DRAFT status so draft products are not queryable in the catalog listings",
+      "expected_file": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/domain/ProductStatus.java",
+      "expected_symbol": "com.shoppoc.catalog.domain.ProductStatus",
+      "legacy_top_results": [
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/domain/ProductStatus.java",
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/persistence/SpringDataProductRepository.java",
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/config/CatalogLocalDataSeeder.java",
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/domain/Product.java",
+        "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/persistence/JpaProductEntity.java"
+      ],
+      "legacy_expected_rank": 1,
+      "hybrid_top_symbols": [
+        {
+          "qualified_name": "com.shoppoc.catalog.domain.ProductStatus",
+          "symbol_type": "enum",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/domain/ProductStatus.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.infrastructure.config.CatalogLocalDataSeeder",
+          "symbol_type": "class",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/infrastructure/config/CatalogLocalDataSeeder.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.application.CatalogApplicationServiceCreateProductTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-catalog/src/test/java/com/shoppoc/catalog/application/CatalogApplicationServiceCreateProductTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.application.CatalogApplicationService",
+          "symbol_type": "class",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/application/CatalogApplicationService.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.catalog.domain.Product",
+          "symbol_type": "class",
+          "file_path": "shoppoc-catalog/src/main/java/com/shoppoc/catalog/domain/Product.java"
+        }
+      ],
+      "hybrid_expected_rank": 1,
+      "pass": true,
+      "explanation": "hybrid found expected in top-10 at rank 1"
+    },
+    {
+      "case_id": "S12",
+      "dimension": "api-impact",
+      "problem": "Add pagination to GET /api/v1/orders in the order controller",
+      "expected_file": "shoppoc-order/src/main/java/com/shoppoc/order/infrastructure/web/OrderController.java",
+      "expected_symbol": "com.shoppoc.order.infrastructure.web.OrderController",
+      "legacy_top_results": [
+        "shoppoc-order/src/main/java/com/shoppoc/order/infrastructure/web/AdminOrderController.java",
+        "shoppoc-order/src/main/java/com/shoppoc/order/infrastructure/web/OrderController.java",
+        "shoppoc-app/src/test/java/com/shoppoc/order/infrastructure/web/OrderControllerTest.java",
+        "shoppoc-app/src/test/java/com/shoppoc/order/infrastructure/web/AdminOrderControllerTest.java",
+        "docs/api-examples.md"
+      ],
+      "legacy_expected_rank": 2,
+      "hybrid_top_symbols": [
+        {
+          "qualified_name": "com.shoppoc.order.infrastructure.web.OrderController",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/infrastructure/web/OrderController.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.infrastructure.web.OrderControllerTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/order/infrastructure/web/OrderControllerTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.domain.Order",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/domain/Order.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.application.OrderApplicationServiceAdminTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/test/java/com/shoppoc/order/application/OrderApplicationServiceAdminTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.domain.OrderStatus",
+          "symbol_type": "enum",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/domain/OrderStatus.java"
+        }
+      ],
+      "hybrid_expected_rank": 1,
+      "pass": true,
+      "explanation": "hybrid found expected in top-10 at rank 1"
+    },
+    {
+      "case_id": "S13",
+      "dimension": "security-relation",
+      "problem": "Admins must not see other users' order summaries; enforce in the admin order controller",
+      "expected_file": "shoppoc-order/src/main/java/com/shoppoc/order/infrastructure/web/AdminOrderController.java",
+      "expected_symbol": "com.shoppoc.order.infrastructure.web.AdminOrderController",
+      "legacy_top_results": [
+        "shoppoc-app/src/test/java/com/shoppoc/app/security/AdminOrderVisibilityIntegrationTest.java",
+        "shoppoc-app/src/test/java/com/shoppoc/order/infrastructure/web/AdminOrderControllerTest.java",
+        "shoppoc-order/src/main/java/com/shoppoc/order/infrastructure/web/AdminOrderController.java",
+        "shoppoc-order/src/main/java/com/shoppoc/order/api/AdminOrderSummaryDto.java",
+        "shoppoc-order/src/main/java/com/shoppoc/order/application/OrderApplicationService.java"
+      ],
+      "legacy_expected_rank": 3,
+      "hybrid_top_symbols": [
+        {
+          "qualified_name": "com.shoppoc.order.infrastructure.web.AdminOrderController",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/infrastructure/web/AdminOrderController.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.infrastructure.web.AdminOrderControllerTest",
+          "symbol_type": "class",
+          "file_path": "shoppoc-app/src/test/java/com/shoppoc/order/infrastructure/web/AdminOrderControllerTest.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.infrastructure.web.OrderController",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/infrastructure/web/OrderController.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.api.AdminOrderSummaryDto",
+          "symbol_type": "class",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/api/AdminOrderSummaryDto.java"
+        },
+        {
+          "qualified_name": "com.shoppoc.order.application.AdminListOrdersUseCase",
+          "symbol_type": "interface",
+          "file_path": "shoppoc-order/src/main/java/com/shoppoc/order/application/AdminListOrdersUseCase.java"
+        }
+      ],
+      "hybrid_expected_rank": 1,
+      "pass": true,
+      "explanation": "hybrid found expected in top-10 at rank 1"
+    }
+  ]
+}
