@@ -18,6 +18,7 @@ class AzureOpenAIEmbeddingProvider:
         api_key: str,
         deployment: str,
         timeout: float = 180.0,
+        dimensions: int | None = None,
     ) -> None:
         if not endpoint.strip():
             raise ValueError("AZURE_OPENAI_ENDPOINT is required")
@@ -30,7 +31,7 @@ class AzureOpenAIEmbeddingProvider:
         if not base_url.endswith("/openai/v1"):
             base_url += "/openai/v1"
         self.model_identity = deployment
-        self.dimensions: int | None = None
+        self.dimensions: int | None = dimensions
         self.last_usage: NormalizedUsage | None = None
         self._client = OpenAI(
             api_key=api_key,

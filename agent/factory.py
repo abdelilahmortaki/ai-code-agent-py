@@ -127,6 +127,7 @@ def create_provider_runtime(settings: Settings, prompt_guard: PromptGuardService
                 azure.endpoint,
                 api_key,
                 azure.embedding_deployment,
+                dimensions=azure.embedding_dimensions,
             ),
         )
 
