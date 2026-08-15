@@ -1097,8 +1097,8 @@ class Engine:
         for category in (
             "provenance", "config", "database", "migrations", "backend", "project",
             "target", "index", "search", "graph", "context", "priority", "executor",
-            "finops", "generation", "persistence", "reject", "accept", "immutable",
-            "evidence",
+            "finops", "routing", "generation", "persistence", "reject", "accept",
+            "immutable", "evidence",
         ):
             print(f"{category.upper():12} {self.result.category_status(category)}")
         print("")
