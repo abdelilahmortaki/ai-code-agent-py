@@ -1,12 +1,17 @@
 # Runtime provider is selected explicitly with AI_PROVIDER=bedrock|azure.
 # The default is bedrock; no automatic provider fallback exists.
+# Azure embedding dimensions (F1.6 incremental reuse): set
+# AZURE_EMBEDDING_DIMENSIONS to the deployment's output dimension so
+# unchanged-file embeddings can be reused across versions instead of being
+# re-embedded. text-embedding-3-large returns 3072 by default. If unset, the
+# dimension is learned from the first real embedding and unchanged-file reuse
+# is conservatively disabled.
 bedrock:
   region: "us-east-1"                              # override with AWS_REGION
   model_id: "qwen.qwen3-coder-30b-a3b-v1:0"       # override with BEDROCK_MODEL_ID
   embeddings_model_id: "amazon.titan-embed-text-v2:0"
   temperature: 0.1                                 # override with BEDROCK_TEMPERATURE
   max_tokens: 32384                                # override with BEDROCK_MAX_TOKENS
-
 agent:
   active_project: ""
   max_attempts: 3

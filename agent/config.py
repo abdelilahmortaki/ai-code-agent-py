@@ -14,6 +14,16 @@ SUPPORTED_EXTENSIONS = {
 }
 
 
+def _int_env(name: str) -> int | None:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return None
+    try:
+        return int(value.strip())
+    except ValueError:
+        return None
+
+
 class ProjectConfig(BaseModel):
     id: str
     name: str
@@ -77,6 +87,7 @@ class AzureConfig(BaseModel):
     api_key: SecretStr = SecretStr("")
     deployment: str = ""
     embedding_deployment: str = ""
+    embedding_dimensions: int | None = None
 
 
 class OpenAiConfig(BaseModel):  # kept for backward-compat, unused when Bedrock is active
@@ -124,6 +135,7 @@ class Settings(BaseModel):
                 api_key=SecretStr(required["AZURE_OPENAI_API_KEY"]),
                 deployment=required["AZURE_OPENAI_DEPLOYMENT"].strip(),
                 embedding_deployment=required["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"].strip(),
+                embedding_dimensions=_int_env("AZURE_EMBEDDING_DIMENSIONS"),
             )
 
         bd = data.get("bedrock", {})
