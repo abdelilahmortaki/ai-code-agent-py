@@ -9,8 +9,9 @@ from pathlib import Path
 import pytest
 
 from agent.config import ProjectConfig
-from agent.models import PatchFile, PatchPlan
+from agent.models import PatchFile, PatchPlan, TestRunResult as RunResult
 from agent.validation import (
+    ValidationService,
     ValidationWorkspace,
     build_maven_argv,
     select_targeted_tests,
@@ -97,7 +98,35 @@ def test_maven_argv_targeted_vs_none():
     project = _project("/tmp/nonexistent")
     argv = build_maven_argv(project, ["MoneyTest", "ProductTest"])
     assert argv == ["mvn", "-q", "-Dtest=MoneyTest,ProductTest", "test"]
-    assert build_maven_argv(project, []) is None
+    assert build_maven_argv(project, []) == ["mvn", "-q", "verify"]
+
+
+def test_maven_fallback_honors_configured_verify_command():
+    project = _project("/tmp/nonexistent").model_copy(update={"test_command": "./mvnw -q verify"})
+    assert build_maven_argv(project, []) == ["./mvnw", "-q", "verify"]
+
+
+def test_validation_never_synthesizes_pass_for_empty_selection(tmp_path):
+    source = tmp_path / "repo"
+    source.mkdir()
+    target = source / "Foo.java"
+    target.write_text("class Foo {}\n")
+    project = _project(str(source))
+    plan = _plan_with([PatchFile(path="Foo.java", operation="modify", content="class Foo {}\n")])
+
+    class Runner:
+        calls = []
+
+        def _run(self, working_dir, command, timeout):
+            self.calls.append((working_dir, command, timeout))
+            return RunResult(
+                command=command, exit_code=7, output="maven failed", argv=command.split(), executed=True
+            )
+
+    runner = Runner()
+    result = ValidationService(runner, fallback="none").validate(project, plan)
+    assert runner.calls and runner.calls[0][1] == "mvn -q verify"
+    assert result.executed and result.strategy == "fallback" and result.exit_code == 7
 
 
 class _NoopStore:

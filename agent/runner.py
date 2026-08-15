@@ -17,7 +17,7 @@ class TestRunner:
 
     def _run(self, working_dir: str, command: str, timeout: int = 300) -> TestRunResult:
         if not command or not command.strip():
-            return TestRunResult(command=command, exit_code=0, output="No command specified")
+            return TestRunResult(command=command, exit_code=1, output="No command specified")
         try:
             argv = split_command(command)
             return SafeCommandExecutor().run(argv, cwd=working_dir, timeout=timeout)

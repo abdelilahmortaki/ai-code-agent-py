@@ -421,7 +421,7 @@ def upload_project(req: _UploadRequest):
         repo_root=str(upload_root.resolve()),
         stories_file="",
         index_file=str(Path(".agent/index") / f"{project_id}-index.json"),
-        test_command="mvn test",
+        test_command="mvn -q verify",
         static_analysis_command="",
     )
     # Avoid duplicates (re-upload of same folder name creates a new id anyway)

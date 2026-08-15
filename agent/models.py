@@ -69,6 +69,10 @@ class TestRunResult(BaseModel):
     command: str
     exit_code: int
     output: str
+    argv: list[str] = []
+    executed: bool = False
+    strategy: str = ""
+    targeted_tests: list[str] = []
     @property
     def failed(self) -> bool:
         return self.exit_code != 0

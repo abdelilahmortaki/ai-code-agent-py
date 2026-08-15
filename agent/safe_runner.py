@@ -96,7 +96,7 @@ class SafeCommandExecutor:
                 timeout=timeout,
             )
             output = (result.stdout or "") + (result.stderr or "")
-            return TestRunResult(command=" ".join(argv), exit_code=result.returncode, output=output)
+            return TestRunResult(command=" ".join(argv), exit_code=result.returncode, output=output, argv=argv, executed=True)
         except subprocess.TimeoutExpired as exc:
             # Py3.10 returns bytes on TimeoutExpired even with text=True
             stdout = exc.stdout or b""
@@ -106,6 +106,6 @@ class SafeCommandExecutor:
             if isinstance(stderr, bytes):
                 stderr = stderr.decode("utf-8", errors="replace")
             output = stdout + stderr + f"\nCommand timed out after {timeout}s"
-            return TestRunResult(command=" ".join(argv), exit_code=124, output=output)
+            return TestRunResult(command=" ".join(argv), exit_code=124, output=output, argv=argv, executed=True)
         except Exception as exc:
-            return TestRunResult(command=" ".join(argv), exit_code=1, output=f"Execution error: {exc}")
+            return TestRunResult(command=" ".join(argv), exit_code=1, output=f"Execution error: {exc}", argv=argv, executed=True)
