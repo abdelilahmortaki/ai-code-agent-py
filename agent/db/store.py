@@ -632,6 +632,8 @@ class PgStore:
             "WHEN similarity(s.name, %s) >= %s AND char_length(%s) >= 3 "
             "AND char_length(%s) <= char_length(s.name) + 3 "
             "THEN 40.0 + 40.0 * similarity(s.name, %s) "
+            "WHEN lower(s.name) LIKE %s ESCAPE '\\' THEN 35.0 "
+            "WHEN lower(s.qualified_name) LIKE %s ESCAPE '\\' THEN 30.0 "
             "ELSE 20.0 "
             "END AS lexical_score, "
             "similarity(s.name, %s) AS name_sim "
@@ -673,26 +675,28 @@ class PgStore:
             query,  # 15 CASE score fuzzy length
             query,  # 16 CASE score fuzzy length guard
             query,  # 17 CASE score fuzzy score
-            query,  # 18 name_sim
-            project_version_id,  # 19 version
-            symbol_type,  # 20 symbol_type null check
-            symbol_type,  # 21 symbol_type equality
-            file_id,  # 22 file_id null check
-            file_id,  # 23 file_id equality
-            query,  # 24 WHERE exact_ci
-            query,  # 25 WHERE qualified full
-            query,  # 26 WHERE qualified short
-            prefix_pattern,  # 27 WHERE prefix
-            query,  # 28 WHERE fuzzy similarity
-            min_similarity,  # 29 WHERE fuzzy threshold
-            query,  # 30 WHERE fuzzy length
-            query,  # 31 WHERE fuzzy length guard
-            contains_pattern,  # 32 WHERE signature contains
-            contains_pattern,  # 33 WHERE module contains
-            contains_pattern,  # 34 WHERE package contains
-            contains_pattern,  # 35 WHERE qualified contains
-            contains_pattern,  # 36 WHERE path contains
-            contains_pattern,  # 37 WHERE source contains
+            contains_pattern,  # 18 score: contains on symbol name (identifier)
+            contains_pattern,  # 19 score: contains on qualified name (identifier)
+            query,  # 20 name_sim
+            project_version_id,  # 21 version
+            symbol_type,  # 22 symbol_type null check
+            symbol_type,  # 23 symbol_type equality
+            file_id,  # 24 file_id null check
+            file_id,  # 25 file_id equality
+            query,  # 26 WHERE exact_ci
+            query,  # 27 WHERE qualified full
+            query,  # 28 WHERE qualified short
+            prefix_pattern,  # 29 WHERE prefix
+            query,  # 30 WHERE fuzzy similarity
+            min_similarity,  # 31 WHERE fuzzy threshold
+            query,  # 32 WHERE fuzzy length
+            query,  # 33 WHERE fuzzy length guard
+            contains_pattern,  # 34 WHERE signature contains
+            contains_pattern,  # 35 WHERE module contains
+            contains_pattern,  # 36 WHERE package contains
+            contains_pattern,  # 37 WHERE qualified contains
+            contains_pattern,  # 38 WHERE path contains
+            contains_pattern,  # 39 WHERE source contains
         )
         try:
             with self.transaction() as conn:

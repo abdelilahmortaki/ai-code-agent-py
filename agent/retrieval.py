@@ -72,6 +72,17 @@ _TECHNICAL_TOKEN = re.compile(
 _UPPER_SNAKE = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 _PASCAL = re.compile(r"[A-Z][a-z0-9]*(?:[A-Z][a-z0-9]*)+$")
 _CAMEL = re.compile(r"[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+$")
+# High-frequency English function words / generic verbs that add only noise
+# as lexical probes (matched against code identifiers).
+_PLAIN_WORD = re.compile(r"[a-z][a-z0-9]{2,}")
+_STOP_WORDS = {
+    "the", "and", "for", "with", "from", "into", "this", "that", "these",
+    "those", "are", "was", "were", "should", "only", "all", "use", "using",
+    "used", "user", "users", "add", "new", "not", "has", "have", "had",
+    "must", "will", "would", "can", "when", "what", "where", "which",
+    "there", "here", "also", "via", "get", "set", "api", "http", "https",
+    "against", "while", "over", "under", "through", "after", "before",
+}
 
 
 def _clamp01(value: float) -> float:
@@ -125,6 +136,13 @@ def derive_lexical_terms(query: str) -> list[str]:
             add(_camel_case(token.split("_")))
         elif _PASCAL.fullmatch(token) or _CAMEL.fullmatch(token):
             add(token)
+    # Plain natural-language words as low-priority contains probes, so
+    # tickets that describe behaviour without code identifiers still get
+    # lexical signal (e.g. "orders" / "controller" match OrderController).
+    for word in _PLAIN_WORD.findall(query.casefold()):
+        if word in _STOP_WORDS:
+            continue
+        add(word)
     return terms
 
 
@@ -305,7 +323,10 @@ class HybridRetrievalService:
             raise ValueError("no versions for project")
         version_id = version["id"]
 
-        pool_size = min(_MAX_POOL_SIZE, max(top_k, max_related, 10))
+        # Candidate pool is wider than the returned top_k so lexical + vector
+        # + graph fusion ranks from a generous set instead of being starved to
+        # exactly top_k candidates per source.
+        pool_size = min(_MAX_POOL_SIZE, max(top_k * 3, max_related, 10))
 
         candidates: dict[str, dict] = {}
         lexical_candidate_ids: set[str] = set()

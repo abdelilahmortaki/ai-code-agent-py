@@ -188,7 +188,7 @@ def test_long_story_derives_lexical_terms_and_keeps_vector_query_unchanged():
         "Only modify the intended behavior; preserve the existing source structure."
     )
     terms = derive_lexical_terms(story)
-    assert terms == [
+    assert terms[:6] == [
         "not-found",
         "notFound",
         "RecordError",
@@ -196,6 +196,12 @@ def test_long_story_derives_lexical_terms_and_keeps_vector_query_unchanged():
         "RESOURCE_NOT_FOUND",
         "resourceNotFound",
     ]
+    # Code-oriented probes come first; significant plain words follow so
+    # natural-language tickets still receive lexical signal.
+    assert "update" in terms
+    assert "error" in terms
+    assert "code" in terms
+    assert "domain" in terms
     assert len(terms) <= 24 and all(len(term) <= 80 for term in terms)
 
     store = _StoryStoreFixture()
