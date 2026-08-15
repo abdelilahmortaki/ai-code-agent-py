@@ -941,6 +941,18 @@ class Engine:
             and routing.get("max_output_tokens") is not None,
             "applied route (profile / graph depth / max output tokens) is persisted",
         )
+        effective_model = routing.get("model_or_deployment")
+        self.result.require(
+            "routing", "effective-model-identity",
+            bool(effective_model) and field(first_latest, "model") == effective_model,
+            "generation invocation uses the persisted routed model/deployment identity",
+        )
+        self.result.require(
+            "finops", "routed-pricing-identity",
+            field(first_latest, "estimated_max_cost") is not None
+            and field(first_latest, "actual_operational_cost_estimate") is not None,
+            "FinOps cost lookup uses the routed model/deployment identity",
+        )
         self.result.require(
             "routing", "route-reason",
             bool(field(first_latest, "routing_reason"))
