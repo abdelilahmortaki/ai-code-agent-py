@@ -239,6 +239,8 @@ class Engine:
         self.pending = False
         self.accepted = False
         self.finops = {}
+        self.fail_fixture: Path | None = None
+        self.fail_fixture_original: str | None = None
 
     # ------------------------------------------------------------------ helpers
 
@@ -1092,6 +1094,32 @@ class Engine:
         VALIDATION_REQUIRED; reject leaves the reference source unchanged.
         """
         target_path = "shoppoc-app/src/main/java/com/shoppoc/app/web/GlobalExceptionHandler.java"
+        uploads_root = (REPO_ROOT / ".agent" / "uploads").resolve()
+        project_root = Path(self.project_root).resolve()
+        try:
+            project_root.relative_to(uploads_root)
+        except ValueError as exc:
+            raise AssertionError("fail probe requires a disposable uploaded project") from exc
+        self.fail_fixture = project_root / (
+            "shoppoc-app/src/test/java/com/shoppoc/app/web/"
+            "GlobalExceptionHandlerTest.java"
+        )
+        if not self.fail_fixture.is_file():
+            raise AssertionError("fail probe test fixture is missing")
+        self.fail_fixture_original = self.fail_fixture.read_text(encoding="utf-8")
+        closing = self.fail_fixture_original.rfind("}")
+        if closing < 0:
+            raise AssertionError("fail probe test fixture has no class boundary")
+        self.fail_fixture.write_text(
+            self.fail_fixture_original[:closing]
+            + "    @Test\n"
+            + "    void deterministicFailureProbe() {\n"
+            + "        throw new AssertionError(\"V1 validation failure probe\");\n"
+            + "    }\n"
+            + self.fail_fixture_original[closing:],
+            encoding="utf-8",
+        )
+        print(f"INFO  disposable Maven failure fixture = {self.fail_fixture.name}")
         root = self.args.source_dir or self.project_root
         target = get_safe_path(root, target_path)
         before_sha = sha256(target)
@@ -1281,6 +1309,11 @@ class Engine:
                         print("INFO  pending plan cleanup: rejected")
                 except Exception as cleanup_exc:
                     print(f"WARN  pending plan cleanup failed: {cleanup_exc}")
+        finally:
+            if self.fail_fixture is not None and self.fail_fixture_original is not None:
+                self.fail_fixture.write_text(self.fail_fixture_original, encoding="utf-8")
+                self.fail_fixture = None
+                self.fail_fixture_original = None
         evidence_path = self.write_evidence()
         print(f"INFO  sanitized evidence = {evidence_path}")
         overall = self.overall_status()
