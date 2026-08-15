@@ -1,0 +1,46 @@
+=== F1 ACCEPTANCE EVIDENCE ===
+date: 2026-08-15T01:27:35Z
+project: upload-1786756681
+=== project_versions ===
+ version_number | source_hash_len | branch |   commit   |          created_at
+----------------+-----------------+--------+------------+-------------------------------
+              1 |              64 | dev    | 4340f3dd4a | 2026-08-15 01:10:14.743144+00
+              1 |              64 | dev    | 4340f3dd4a | 2026-08-15 01:16:34.425835+00
+              1 |              64 | dev    | 4340f3dd4a | 2026-08-15 01:18:06.472685+00
+              2 |              64 | dev    | 4340f3dd4a | 2026-08-15 01:10:14.836982+00
+              2 |              64 | dev    | 4340f3dd4a | 2026-08-15 01:26:40.870076+00
+(5 rows)
+
+=== file hash sample ===
+ hash_len | count
+----------+-------
+       64 |   544
+(1 row)
+
+=== symbols by type ===
+ symbol_type | count
+-------------+-------
+ method      |  2025
+ class       |   409
+ constructor |   219
+ interface   |    69
+ enum        |    24
+(5 rows)
+
+=== embeddings provenance ===
+ provider |  deployment_or_model   | dimensions | count
+----------+------------------------+------------+-------
+ azure    | text-embedding-3-large |       3072 |  2746
+(1 row)
+
+=== edges by relation (latest version) ===
+ relation_type | count
+---------------+-------
+ CALLS         |  2646
+ IMPORTS       |  1143
+ TESTED_BY     |   738
+ IMPLEMENTS    |    66
+ INHERITS      |     3
+(5 rows)
+
+=== per-version counts ===
