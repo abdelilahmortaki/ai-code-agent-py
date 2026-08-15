@@ -521,7 +521,10 @@ def accept_plan(project_id: str):
     except StalePatchError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        detail = str(exc)
+        if detail.startswith("VALIDATION_REQUIRED"):
+            raise HTTPException(status_code=409, detail=detail) from exc
+        raise HTTPException(status_code=404, detail=detail)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

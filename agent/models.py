@@ -37,6 +37,7 @@ class ProposalFile(BaseModel):
     operation: str
     content: Optional[str] = None
     edits: list[ExactEdit] = []
+    reason: str = ""
 
 class PatchProposalPlan(BaseModel):
     storyId: str
@@ -50,6 +51,7 @@ class PatchFile(BaseModel):
     operation: str
     content: Optional[str] = None
     base_file_hash: Optional[str] = None
+    reason: str = ""
 
 class PatchPlan(BaseModel):
     storyId: str

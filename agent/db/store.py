@@ -1297,6 +1297,37 @@ class PgStore:
         except psycopg.Error as exc:
             raise PgStoreError("failed to insert llm invocation") from exc
 
+    def tests_for_paths(self, project_version_id: str, paths: list[str]) -> list[str]:
+        """Return test class names (TESTED_BY targets) for symbols in paths.
+
+        Edge convention: ``<code symbol> TESTED_BY <test symbol>`` — the
+        tested code is the SOURCE and the test is the TARGET of the edge.
+        """
+        if not paths:
+            return []
+        sql = (
+            "SELECT DISTINCT f2.path "
+            "FROM code_symbols s "
+            "JOIN code_files f ON f.id = s.file_id AND f.project_version_id = %s "
+            "JOIN code_edges ce ON ce.project_version_id = %s "
+            " AND ce.source_symbol_id = s.id AND ce.relation_type = 'TESTED_BY' "
+            "JOIN code_symbols s2 ON s2.id = ce.target_symbol_id "
+            "JOIN code_files f2 ON f2.id = s2.file_id "
+            "WHERE f.path = ANY(%s)"
+        )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (project_version_id, project_version_id, paths))
+                    rows = cur.fetchall()
+        except psycopg.Error as exc:
+            raise PgStoreError("failed to select TESTED_BY tests") from exc
+        names: list[str] = []
+        for (path,) in rows:
+            if path.endswith(".java"):
+                names.append(Path(path).stem)
+        return names
+
     def find_run(self, run_id: str) -> dict | None:
         """Return a run row by id, or None if it does not exist."""
         sql = (

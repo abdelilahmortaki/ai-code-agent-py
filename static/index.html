@@ -258,6 +258,7 @@
         <div class="tab" onclick="tab('analysis')">Static Analysis</div>
         <div class="tab" onclick="tab('files')">Files Changed</div>
         <div class="tab" onclick="tab('context')">Why this context?</div>
+        <div class="tab" onclick="tab('validation')">Validation</div>
         <div class="tab" onclick="tab('finops')">FinOps</div>
       </div>
       <div id="tb-diff" class="tab-body active">
@@ -271,6 +272,9 @@
       </div>
       <div id="tb-context" class="tab-body">
         <div class="empty"><svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--border)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg><span>No context yet — run the agent or use Preview Context</span></div>
+      </div>
+      <div id="tb-validation" class="tab-body">
+        <div class="empty"><svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--border)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>No validation run yet</span></div>
       </div>
       <div id="tb-finops" class="tab-body">
         <div class="empty"><svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--border)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v12"/><path d="m8 12 4 4 4-4"/></svg><span>No FinOps trace yet — run the agent first</span></div>
@@ -863,6 +867,9 @@ function renderResults(r) {
     hdr.innerHTML = `
       <span class="badge ${anaOk?'bs':'bw'}" style="display:inline-flex;align-items:center;gap:4px">${anaOk?ic.check():ic.alert()} Analysis ${anaOk?'OK':(r.analysis?.findings?.length||0)+' issues'}</span>
       <span class="badge bi" style="display:inline-flex;align-items:center;gap:4px">${ic.repeat()} ${r.attempts_used} attempt${r.attempts_used!==1?'s':''}</span>
+      ${r.test_run ? (r.test_run.exit_code === 0
+        ? `<span class="badge bs" style="display:inline-flex;align-items:center;gap:4px">${ic.check()} Validation PASS</span>`
+        : `<span class="badge bw" style="display:inline-flex;align-items:center;gap:4px">${ic.alert()} Validation FAIL</span>`) : ''}
       <span style="font-size:12px;color:var(--text-dim);margin-left:6px">${esc(r.plan?.summary||'')}</span>`;
   }
 
@@ -887,9 +894,33 @@ function renderResults(r) {
 
   // Why this context? — rendered beside Diff (same context as generation input)
   renderContext(r.context);
+  renderValidation(r.test_run);
   renderFinOps(r.project_id);
 
   tab('diff');
+}
+
+// ─── Validation (F5.6) ───────────────────────────────────────────────────────
+function renderValidation(testRun) {
+  const el = document.getElementById('tb-validation');
+  if (!testRun) {
+    el.innerHTML = `<div class="empty"><span>Validation disabled or not run</span></div>`;
+    return;
+  }
+  const pass = testRun.exit_code === 0;
+  const output = (testRun.output || '');
+  const tail = output.split('\n').slice(-60).join('\n');
+  const badge = pass
+    ? `<span class="badge bs" style="display:inline-flex;align-items:center;gap:4px">${ic.check()} Validation PASS</span>`
+    : `<span class="badge bw" style="display:inline-flex;align-items:center;gap:4px">${ic.alert()} Validation FAIL</span>`;
+  el.innerHTML = `
+    <div class="ctx-summary">
+      ${badge}
+      <span style="color:var(--text-dim)">Command: <b style="color:var(--text)">${esc(testRun.command||'no targeted tests selected')}</b></span>
+      <span style="color:var(--text-dim)">Exit code: <b style="color:var(--text)">${testRun.exit_code}</b></span>
+      <span style="flex:1"></span>
+    </div>
+    ${testRun.command ? `<pre id="test-output" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;max-height:360px;overflow:auto;white-space:pre-wrap;margin-top:8px">${esc(tail)}</pre>` : ''}`;
 }
 
 // ─── FinOps trace (F3.8) ──────────────────────────────────────────────────────

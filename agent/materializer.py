@@ -25,7 +25,13 @@ class PatchMaterializer:
             content = proposal.content if operation == "create" else None
             if operation == "modify":
                 content = self.materialize_content(current, proposal)
-            result.append(PatchFile(path=proposal.path, operation=operation, content=content, base_file_hash=base_file_hash))
+            result.append(PatchFile(
+                path=proposal.path,
+                operation=operation,
+                content=content,
+                base_file_hash=base_file_hash,
+                reason=proposal.reason,
+            ))
         return PatchPlan(storyId=plan.storyId, summary=plan.summary, files=result, tests=plan.tests, notes=plan.notes)
 
     @staticmethod
