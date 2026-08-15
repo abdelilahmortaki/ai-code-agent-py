@@ -7,12 +7,20 @@ from typing import TYPE_CHECKING, Callable
 from agent.config import AgentConfig
 from agent.analysis import StaticAnalysisService
 from agent.codebase import CodebaseService
+from agent.context import build_legacy_bundle
 from agent.git_service import GitDiffService
 from agent.guard import PromptGuardService
 from agent.index import SemanticIndexService
-from agent.models import PatchPlan, PatchProposalPlan, PatchResult, ProjectOverview, TestFailureContext, UserStory
+from agent.models import (
+    ContextBundle,
+    PatchPlan,
+    PatchProposalPlan,
+    PatchResult,
+    ProjectOverview,
+    TestFailureContext,
+    UserStory,
+)
 from agent.materializer import PatchMaterializer
-from agent.guard import PromptGuardService
 from agent.paths import resolve_within
 from agent.patch import PatchApplierService
 from agent.providers import GenerationProvider
@@ -20,7 +28,9 @@ from agent.runner import TestRunner
 from agent.stories import StoryFileReader
 
 if TYPE_CHECKING:
+    from agent.context import ContextBuilder
     from agent.db.store import PgStore
+    from agent.retrieval import HybridRetrievalService
 
 
 _MAX_GENERATION_ATTEMPTS = 2
@@ -55,6 +65,8 @@ class AgentOrchestrator:
         story_reader: StoryFileReader,
         prompt_guard: PromptGuardService | None = None,
         store: PgStore | None = None,
+        hybrid_retrieval: HybridRetrievalService | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         self.config = config
         self.codebase = codebase
@@ -68,6 +80,8 @@ class AgentOrchestrator:
         self.materializer = PatchMaterializer()
         self.prompt_guard = prompt_guard or PromptGuardService()
         self.store = store
+        self.hybrid_retrieval = hybrid_retrieval
+        self.context_builder = context_builder
         # Pending plans awaiting user accept/reject — keyed by project_id.
         # Each entry is (plan, preview_diff, run_id) where run_id may be None
         # when run persistence is disabled.
@@ -208,30 +222,46 @@ class AgentOrchestrator:
             raise
 
     def _run_lifecycle(self, project, story: UserStory, log: Callable[[str], None], run_id: str | None) -> PatchResult:
-        log("Checking semantic index…")
-        if not self.semantic_index.exists(project):
-            log("Index missing — building from codebase…")
-            chunks = self.semantic_index.rebuild(project)
-            log(f"Index built: {len(chunks)} chunks embedded")
-
         log("Running static pre-analysis…")
         pre_analysis = self.static_analysis.analyze(project)
         if pre_analysis.findings:
             log(f"Pre-analysis: {len(pre_analysis.findings)} hygiene issue(s) detected")
 
-        log("Searching semantic index for relevant files…")
-        relevant_paths = self.semantic_index.search(
-            project,
-            f"{story.title}\n{story.description}",
-            self.config.max_context_files,
-        )
-        relevant_files = [
-            (path, content)
-            for path in relevant_paths
-            if (content := self.codebase.read_file(project, path)) is not None
-        ]
-        total_chars = sum(len(c) for _, c in relevant_files)
-        log(f"Context: {len(relevant_files)} file(s) loaded ({total_chars:,} chars total)")
+        context_bundle: ContextBundle | None = None
+        retrieval_mode = "legacy"
+
+        if self._hybrid_available(project):
+            retrieval_mode, context_bundle, relevant_files = self._hybrid_context(
+                project, story, log
+            )
+        else:
+            log("Hybrid index unavailable — using legacy semantic context")
+            log("Checking semantic index…")
+            if not self.semantic_index.exists(project):
+                log("Index missing — building from codebase…")
+                chunks = self.semantic_index.rebuild(project)
+                log(f"Index built: {len(chunks)} chunks embedded")
+
+            log("Searching semantic index for relevant files…")
+            relevant_paths = self.semantic_index.search(
+                project,
+                f"{story.title}\n{story.description}",
+                self.config.max_context_files,
+            )
+            relevant_files = [
+                (path, content)
+                for path in relevant_paths
+                if (content := self.codebase.read_file(project, path)) is not None
+            ]
+            total_chars = sum(len(c) for _, c in relevant_files)
+            log(f"Context: {len(relevant_files)} file(s) loaded ({total_chars:,} chars total)")
+            version = self._latest_version(project)
+            context_bundle = build_legacy_bundle(
+                relevant_files,
+                max_context_files=self.config.max_context_files,
+                project_version_id=version["id"] if version else None,
+                version_number=version["version_number"] if version else None,
+            )
 
         plan, attempts_used = self._generate_patch_plan(
             project, story, relevant_files, pre_analysis.report, log, run_id=run_id
@@ -257,7 +287,72 @@ class AgentOrchestrator:
             test_run=None,
             attempts_used=attempts_used,
             pending_review=True,
+            retrieval_mode=retrieval_mode,
+            context=context_bundle,
         )
+
+    # ------------------------------------------------------------------ hybrid context
+
+    def _hybrid_available(self, project) -> bool:
+        """Primary path requires the PostgreSQL hybrid index for the project."""
+        return (
+            self.hybrid_retrieval is not None
+            and self.context_builder is not None
+            and bool(
+                self.hybrid_retrieval.hybrid_index_status(project.id).get(
+                    "available"
+                )
+            )
+        )
+
+    def _story_query(self, story: UserStory) -> str:
+        """Ticket text embedded/retrieved: title + description + criteria."""
+        parts = [story.title, story.description]
+        parts.extend(story.acceptanceCriteria or [])
+        return "\n".join(part for part in parts if part and part.strip())
+
+    def _latest_version(self, project) -> dict | None:
+        """Latest indexed project version, best-effort (None without a store)."""
+        if self.store is None:
+            return None
+        try:
+            row = self.store.find_project_by_external_id(project.id)
+            return self.store.latest_version(row["id"]) if row is not None else None
+        except Exception:
+            return None
+
+    def _hybrid_context(self, project, story: UserStory, log: Callable[[str], None]) -> tuple[str, ContextBundle, list[tuple[str, str]]]:
+        """Hybrid retrieval → Context Builder → full selected files.
+
+        Never falls back to legacy here: hybrid was already confirmed
+        available. Generation-provider errors must propagate (not be masked).
+        """
+        log("Using hybrid symbol context")
+        query_text = self._story_query(story)
+        result = self.hybrid_retrieval.retrieve(
+            project.id,
+            query_text,
+            top_k=self.config.hybrid_retrieval_top_k,
+            graph_depth=self.config.hybrid_graph_depth,
+            max_related=self.config.hybrid_max_related,
+        )
+        bundle = self.context_builder.build(
+            project=project,
+            query=query_text,
+            retrieval=result,
+            estimated_token_budget=self.config.hybrid_context_budget,
+            max_context_files=self.config.max_context_files,
+        )
+        log(
+            f"Context: {bundle.included_count} symbol(s) from "
+            f"{len(bundle.selected_files)} file(s) "
+            f"({bundle.estimated_tokens:,} estimated tokens)"
+        )
+        relevant_files = [
+            (path, bundle.file_contents.get(path, ""))
+            for path in bundle.selected_files
+        ]
+        return "hybrid", bundle, relevant_files
 
     # ------------------------------------------------------------------ run persistence (best-effort)
 

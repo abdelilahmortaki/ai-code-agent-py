@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Optional
 from pydantic import BaseModel, field_validator
 
+from agent.context import ContextBundle
 from agent.priority import normalize_priority
 
 class UserStory(BaseModel):
@@ -97,3 +98,7 @@ class PatchResult(BaseModel):
     test_run: Optional[TestRunResult] = None
     attempts_used: int
     pending_review: bool = False
+    # F2 hybrid contextual RAG: which retrieval mode produced the context
+    # and the explainable context bundle (None when no store/services).
+    retrieval_mode: str = "legacy"
+    context: Optional[ContextBundle] = None

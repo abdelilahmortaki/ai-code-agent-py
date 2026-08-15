@@ -123,6 +123,19 @@
     /* ── Analysis ── */
     .finding{display:flex;gap:8px;padding:7px 16px;font-size:13px;border-bottom:1px solid var(--border)}
 
+    /* ── Why this context? ── */
+    .ctx-summary{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;font-size:12px}
+    .ctx-files{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+    .ctx-file{color:var(--accent);cursor:pointer;font-family:'Consolas','Courier New',monospace;font-size:12px}
+    .ctx-file:hover{text-decoration:underline}
+    .ctx-item{display:flex;flex-direction:column;gap:4px;padding:10px 16px;border-bottom:1px solid var(--border);font-size:12.5px}
+    .ctx-item.excluded{opacity:.45}
+    .ctx-item-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .ctx-qname{font-weight:600;color:var(--text-bright);font-family:'Consolas','Courier New',monospace}
+    .ctx-meta{color:var(--text-dim);font-size:11.5px}
+    .ctx-reasons{color:var(--text-dim);line-height:1.5}
+    .ctx-reasons li{margin-left:18px}
+
     /* ── Empty / no-result ── */
     .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text-dim);padding:40px;text-align:center}
     .empty>svg{opacity:.35}
@@ -227,6 +240,12 @@
           <button class="primary" id="run-btn" onclick="runAgent()" style="white-space:nowrap;display:inline-flex;align-items:center;gap:7px"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>Run Agent</button>
         </div>
       </div>
+      <div class="form-row">
+        <div style="display:flex;align-items:flex-end;gap:10px">
+          <button id="preview-btn" onclick="previewContext()" style="white-space:nowrap;display:inline-flex;align-items:center;gap:7px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8"/><path d="M17 3h4v4"/><path d="M21 3 11 13"/></svg>Preview Context</button>
+          <span style="font-size:11.5px;color:var(--text-dim)">Read-only: runs hybrid retrieval + Context Builder, no LLM, no patch.</span>
+        </div>
+      </div>
     </div>
 
     <!-- Results -->
@@ -238,6 +257,7 @@
         <div class="tab active" onclick="tab('diff')">Diff</div>
         <div class="tab" onclick="tab('analysis')">Static Analysis</div>
         <div class="tab" onclick="tab('files')">Files Changed</div>
+        <div class="tab" onclick="tab('context')">Why this context?</div>
       </div>
       <div id="tb-diff" class="tab-body active">
         <div class="empty"><svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--border)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v14"/><path d="m9 6-3 3 3 3"/><path d="m15 18 3-3-3-3"/><circle cx="7" cy="3" r="2"/><circle cx="17" cy="21" r="2"/></svg><span>No diff yet — run the agent first</span></div>
@@ -247,6 +267,9 @@
       </div>
       <div id="tb-files" class="tab-body">
         <div class="empty"><svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--border)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-3a2 2 0 0 1-2-2V2"/><path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z"/><path d="M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8"/></svg><span>No files changed yet</span></div>
+      </div>
+      <div id="tb-context" class="tab-body">
+        <div class="empty"><svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--border)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg><span>No context yet — run the agent or use Preview Context</span></div>
       </div>
     </div>
 
@@ -710,14 +733,26 @@ async function rebuildIndex() {
   if (!project) { alert('Select a project first.'); return; }
   showOverlay(true, 'Scanning repo and computing embeddings…');
   document.getElementById('rebuild-btn').disabled = true;
+  // Prepare BOTH indexes: legacy JSON chunk index + PostgreSQL hybrid index.
+  let legacyMsg = '', hybridMsg = '';
   try {
     const r = await api(`/api/agent/${project}/index/rebuild`, { method: 'POST' });
-    alert(r.message || 'Done');
-  } catch (e) { alert('Rebuild failed: ' + e.message); }
-  finally {
-    showOverlay(false);
-    document.getElementById('rebuild-btn').disabled = false;
+    legacyMsg = r.message || 'Legacy index rebuilt';
+  } catch (e) { legacyMsg = 'Legacy index failed: ' + e.message; }
+  try {
+    const r = await api(`/api/agent/${project}/index/pg?incremental=true`, { method: 'POST' });
+    hybridMsg = `Hybrid index: ${r.files_total ?? 0} files, ` +
+      `${r.symbols_indexed ?? 0} symbols indexed, ` +
+      `${r.embeddings_indexed ?? 0} embeddings, ` +
+      `${r.files_reused ?? 0} files reused` +
+      (r.graph ? `, ${r.graph.edges_inserted ?? 0} graph edges` : '') +
+      ` (version ${r.version?.version_number ?? '?'})`;
+  } catch (e) {
+    hybridMsg = 'Hybrid index unavailable: ' + e.message;
   }
+  alert(`${legacyMsg}\n\n${hybridMsg}`);
+  showOverlay(false);
+  document.getElementById('rebuild-btn').disabled = false;
 }
 
 // ─── accept / reject ────────────────────────────────────────────────────────────
@@ -846,6 +881,9 @@ function renderResults(r) {
         </div>`).join('')
     : `<div class="empty"><span>No files changed</span></div>`;
 
+  // Why this context? — rendered beside Diff (same context as generation input)
+  renderContext(r.context);
+
   tab('diff');
 }
 
@@ -858,9 +896,112 @@ function renderDiff(text) {
   el.innerHTML = ''; el.appendChild(v);
 }
 
+// ─── why this context? ─────────────────────────────────────────────────────────
+function _ctxBadge(src) {
+  const cls = src === 'graph' ? 'bw' : (src === 'vector' ? 'bi' : 'bs');
+  return `<span class="badge ${cls}" style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;padding:1px 8px">${esc(src)}</span>`;
+}
+
+function renderContext(c) {
+  const el = document.getElementById('tb-context');
+  if (!c) {
+    el.innerHTML = `<div class="empty"><span>No context yet — run the agent or use Preview Context</span></div>`;
+    return;
+  }
+  const items = c.items || [];
+  const inc = items.filter(i => i.included).length;
+  const exc = items.length - inc;
+  const files = c.selected_files || [];
+  const ftMap = {};
+  (c.file_tokens || []).forEach(ft => { ftMap[ft.path] = ft.estimated_tokens; });
+  const modeBadge = c.retrieval_mode === 'hybrid'
+    ? `<span class="badge bi" style="display:inline-flex;align-items:center;gap:4px">HYBRID</span>`
+    : `<span class="badge bw" style="display:inline-flex;align-items:center;gap:4px">LEGACY</span>`;
+
+  const summary = `
+    <div class="ctx-summary">
+      ${modeBadge}
+      <span style="color:var(--text-dim)">Retrieval mode: <b style="color:var(--text)">${esc(c.retrieval_mode || 'legacy')}</b></span>
+      <span style="color:var(--text-dim)">Project version: <b style="color:var(--text)">${c.version_number ?? '—'}</b></span>
+      <span style="color:var(--text-dim)">Graph depth: <b style="color:var(--text)">${c.graph_depth ?? 0}</b></span>
+      <span style="color:var(--text-dim)">Included: <b style="color:var(--green)">${inc}</b> / Excluded: <b style="color:var(--text)">${exc}</b></span>
+      <span style="color:var(--text-dim)">Estimated tokens: <b style="color:var(--text)">${(c.estimated_tokens ?? 0).toLocaleString()}</b></span>
+      <span style="flex:1"></span>
+    </div>
+    <div class="ctx-summary" style="border-bottom:1px solid var(--border)">
+      <span style="color:var(--text-dim)">Selected files (${files.length}):</span>
+      <span class="ctx-files">
+        ${files.map(p => {
+          const ft = ftMap[p] != null ? ` · ${ftMap[p].toLocaleString()} tok` : '';
+          return `<span class="ctx-file" data-path="${esc(p)}" onclick="openFile('${p.replace(/'/g, "\\'")}')">${esc(p)}${ft}</span>`;
+        }).join('') || '<span style="color:var(--text-dim)">none</span>'}
+      </span>
+    </div>`;
+
+  const itemHtml = items.map(i => {
+    const badges = (i.retrieval_sources || []).map(_ctxBadge).join('');
+    const rels = (i.graph_relations || []).map(r =>
+      `<span style="color:var(--yellow)">${esc(r.relation_type)}:${esc(r.direction)}</span>`).join(' · ');
+    const reasons = (i.reasons || []).map(r => `<li>${esc(r)}</li>`).join('');
+    return `
+      <div class="ctx-item${i.included ? '' : ' excluded'}">
+        <div class="ctx-item-top">
+          <span class="ctx-qname">${esc(i.qualified_name || i.symbol)}</span>
+          <span class="badge bw" style="font-size:10px;padding:0 6px">${esc(i.symbol_type || 'symbol')}</span>
+          ${badges}
+          <span style="flex:1"></span>
+          <span class="ctx-meta">${i.included ? 'included' : 'excluded'}</span>
+        </div>
+        <div class="ctx-meta" style="display:flex;gap:14px;flex-wrap:wrap">
+          <span style="color:var(--text-dim)">${esc(i.signature || '')}</span>
+        </div>
+        <div class="ctx-meta">
+          <span style="color:var(--text-dim)">File: </span>
+          <span class="ctx-file" onclick="openFile('${i.file_path.replace(/'/g, "\\'")}')">${esc(i.file_path)}</span>
+        </div>
+        ${reasons ? `<ul class="ctx-reasons" style="margin:0;padding:0;list-style:none">${reasons}</ul>` : ''}
+        <div class="ctx-meta" style="display:flex;gap:14px;flex-wrap:wrap">
+          <span>${rels ? 'Graph: ' + rels : 'Graph: —'}</span>
+          <span>${i.estimated_tokens} est. tokens</span>
+          <span>final ${(i.final_score ?? 0).toFixed(3)}</span>
+          <span>priority: ${esc(i.priority || 'medium')}</span>
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = summary + (itemHtml || `<div class="empty"><span>No symbols retrieved</span></div>`);
+}
+
+// Preview Context — read-only, opens the "Why this context?" tab. No LLM, no patch.
+async function previewContext() {
+  const title = document.getElementById('s-title').value.trim();
+  const desc  = document.getElementById('s-desc').value.trim();
+  if (!title || !desc) { alert('Title and Description are required.'); return; }
+  if (!project) { alert('Select a project first.'); return; }
+  const criteria = document.getElementById('s-criteria').value
+    .split('\n').map(s => s.trim()).filter(Boolean);
+  const priority = document.getElementById('s-priority').value;
+  showOverlay(true, 'Building hybrid context preview (no LLM)…');
+  document.getElementById('preview-btn').disabled = true;
+  try {
+    const bundle = await api(`/api/agent/${project}/context-preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, description: desc, acceptanceCriteria: criteria, priority }),
+    });
+    renderContext(bundle);
+    tab('context');
+  } catch (e) {
+    alert('Context preview failed: ' + e.message);
+  } finally {
+    showOverlay(false);
+    document.getElementById('preview-btn').disabled = false;
+  }
+}
+
 // ─── tabs ────────────────────────────────────────────────────────────────────
 function tab(name) {
-  const names = ['diff','analysis','files'];
+  const names = ['diff','analysis','files','context'];
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', names[i] === name));
   document.querySelectorAll('.tab-body').forEach(b => b.classList.remove('active'));
   document.getElementById('tb-' + name).classList.add('active');
