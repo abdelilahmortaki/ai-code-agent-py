@@ -66,7 +66,7 @@ agent:
     model_overrides: {}
   # F5 disposable validation + bounded repair.
   validation_enabled: true
-  test_selection_fallback: none
+  test_selection_fallback: verify
   max_repair_attempts: 2
   projects: []              # empty — projects are added at runtime via Browse Folder
 

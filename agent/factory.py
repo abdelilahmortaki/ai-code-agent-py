@@ -33,6 +33,7 @@ class BedrockGenerationProvider:
     def __init__(self, service: object, config: BedrockConfig) -> None:
         self._service = service
         self.model_identity = config.model_id
+        self.max_output_tokens = config.max_tokens
 
     def build_prompt(
         self,
@@ -78,6 +79,9 @@ class BedrockGenerationProvider:
     ) -> PatchProposalPlan:
         return self._service.generate_fix_plan(ctx, log_callback, options=options)
 
+    def build_fix_prompt(self, ctx: TestFailureContext) -> str:
+        return self._service.build_fix_prompt(ctx)
+
     @property
     def last_usage(self) -> NormalizedUsage | None:
         return self.normalize_usage(getattr(self._service, "last_usage", None))
@@ -107,7 +111,7 @@ class BedrockGenerationProvider:
         return normalized
 
     @staticmethod
-    def count_tokens(text: str) -> None:
+    def count_tokens(text: str, model_or_deployment: str | None = None) -> None:
         return None
 
     @staticmethod

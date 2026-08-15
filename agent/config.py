@@ -30,7 +30,7 @@ class ProjectConfig(BaseModel):
     repo_root: str
     stories_file: str
     index_file: str
-    test_command: str = "mvn test"
+    test_command: str = "mvn -q verify"
     static_analysis_command: str = ""
     validation_timeout_seconds: int = 300
     allowed_write_extensions: list[str] = [
@@ -77,8 +77,8 @@ class AgentConfig(BaseModel):
 
     # F5 disposable validation + bounded repair.
     # validation_enabled: run the disposable-workspace test gate before review.
-    # test_selection_fallback: "none" (no targeted test -> skipped/passed with
-    #   recorded reason) or "verify" (fall back to the project test command).
+    # Kept for registry compatibility; validation always performs a real
+    # targeted test or Maven verify fallback.
     # max_repair_attempts: bounded repair rounds (0 disables repair).
     validation_enabled: bool = False
     test_selection_fallback: str = "none"

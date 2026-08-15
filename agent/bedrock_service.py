@@ -152,7 +152,18 @@ class BedrockService:
         log_callback: Callable[[str], None] = _noop,
         options: ExecutionOptions | None = None,
     ) -> PatchProposalPlan:
-        prompt = (
+        model_id = options.model_or_deployment if options else None
+        max_tokens = options.max_output_tokens if options else None
+        return self._call(
+            ctx.story_id,
+            self.build_fix_prompt(ctx),
+            log_callback,
+            model_id=model_id or self.cfg.model_id,
+            max_tokens=max_tokens if max_tokens is not None else self.cfg.max_tokens,
+        )
+
+    def build_fix_prompt(self, ctx: TestFailureContext) -> str:
+        return (
             "A previous patch failed.\n\n"
             f"storyId: {ctx.story_id}\n"
             f"summary: {ctx.summary}\n"
@@ -162,15 +173,6 @@ class BedrockService:
             f"TEST_OUTPUT:\n{self.prompt_guard.sanitize_for_fix(ctx.test_output)}\n\n"
             f"STATIC_ANALYSIS:\n{self.prompt_guard.sanitize_for_fix(ctx.static_analysis_report)}\n\n"
             + _SCHEMA_HINT
-        )
-        model_id = options.model_or_deployment if options else None
-        max_tokens = options.max_output_tokens if options else None
-        return self._call(
-            ctx.story_id,
-            prompt,
-            log_callback,
-            model_id=model_id or self.cfg.model_id,
-            max_tokens=max_tokens if max_tokens is not None else self.cfg.max_tokens,
         )
 
     # ------------------------------------------------------------------ private

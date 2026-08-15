@@ -130,7 +130,18 @@ class AzureOpenAIGenerationProvider:
         log_callback: Callable[[str], None] = _noop,
         options: ExecutionOptions | None = None,
     ) -> PatchProposalPlan:
-        prompt = (
+        model = options.model_or_deployment if options else None
+        max_output = options.max_output_tokens if options else None
+        return self._generate(
+            ctx.story_id,
+            self.build_fix_prompt(ctx),
+            log_callback,
+            model=model or self.model_identity,
+            max_output_tokens=max_output if max_output is not None else self.max_output_tokens,
+        )
+
+    def build_fix_prompt(self, ctx: TestFailureContext) -> str:
+        return (
             "A previous patch failed.\n\n"
             f"storyId: {ctx.story_id}\n"
             f"summary: {ctx.summary}\n"
@@ -140,15 +151,6 @@ class AzureOpenAIGenerationProvider:
             f"TEST_OUTPUT:\n{self._prompt_guard.sanitize_for_fix(ctx.test_output)}\n\n"
             f"STATIC_ANALYSIS:\n{self._prompt_guard.sanitize_for_fix(ctx.static_analysis_report)}\n\n"
             + _SCHEMA_HINT
-        )
-        model = options.model_or_deployment if options else None
-        max_output = options.max_output_tokens if options else None
-        return self._generate(
-            ctx.story_id,
-            prompt,
-            log_callback,
-            model=model or self.model_identity,
-            max_output_tokens=max_output if max_output is not None else self.max_output_tokens,
         )
 
     @staticmethod
@@ -163,7 +165,7 @@ class AzureOpenAIGenerationProvider:
         return {key: int(value) for key, value in values.items() if value is not None}
 
     @staticmethod
-    def count_tokens(text: str) -> None:
+    def count_tokens(text: str, model_or_deployment: str | None = None) -> None:
         return None
 
     @staticmethod

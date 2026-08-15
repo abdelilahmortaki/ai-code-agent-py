@@ -239,6 +239,8 @@ class Engine:
         self.pending = False
         self.accepted = False
         self.finops = {}
+        self.fail_fixture: Path | None = None
+        self.fail_fixture_original: str | None = None
 
     # ------------------------------------------------------------------ helpers
 
@@ -647,7 +649,7 @@ class Engine:
             f"/api/agent/{project_path}/search?query={self.args.search_term}&top_k=10"
         )
         self.result.require(
-            "search", "lexical-http", status == 200, "configured lexical search responds with HTTP 200"
+            "lexical", "lexical-http", status == 200, "configured lexical search responds with HTTP 200"
         )
         results = json_array(body, "results")
         self.version_id = str(field(body, "project_version_id"))
@@ -664,12 +666,12 @@ class Engine:
             )
         ]
         self.result.require(
-            "search", "lexical-results",
+            "lexical", "lexical-results",
             len(results) > 0 and bool(self.version_id),
             "lexical retrieval returns useful indexed results",
         )
         self.result.require(
-            "search", "target-result", len(useful) > 0,
+            "lexical", "target-result", len(useful) > 0,
             "lexical retrieval includes the configured target file or symbol",
         )
         seed_result = useful[0]
@@ -679,7 +681,7 @@ class Engine:
             name = str(field(seed_result, "name"))
             seed = name if not owner else f"{owner}.{name}"
         self.result.require(
-            "search", "graph-seed", bool(seed), "a deterministic useful lexical result provides a graph seed"
+            "lexical", "graph-seed", bool(seed), "a deterministic useful lexical result provides a graph seed"
         )
         self.check_graph(seed)
 
@@ -794,6 +796,16 @@ class Engine:
             len(json_array(body, "selected_files")) > 0,
             "context bundle lists selected complete files",
         )
+        context_sources = {
+            source
+            for item in items
+            for source in json_array(item, "retrieval_sources")
+        }
+        self.result.require(
+            "vector/hybrid", "hybrid-evidence",
+            "vector" in context_sources,
+            "context preview carries vector/hybrid retrieval evidence",
+        )
 
     def check_finops_boundary(self) -> None:
         finops = python_json(
@@ -852,8 +864,32 @@ class Engine:
         test_run = field(first_body, "test_run")
         self.result.require(
             "validation", "test-run",
-            isinstance(test_run, dict) and field(test_run, "exit_code") in (0, 1),
+            isinstance(test_run, dict) and isinstance(field(test_run, "exit_code"), int),
             "disposable validation produced a TestRunResult",
+        )
+        validation_argv = json_array(test_run, "argv")
+        validation_strategy = field(test_run, "strategy")
+        validation_command = str(field(test_run, "command") or "")
+        self.result.require(
+            "validation", "actual-command",
+            bool(validation_command)
+            and validation_argv
+            and str(validation_argv[0]).lower() in ("mvn", "mvnw", "mvn.cmd", "mvnw.cmd")
+            and bool(field(test_run, "executed")),
+            "validation records an executed Maven command and argv",
+        )
+        self.result.require(
+            "validation", "targeted-or-fallback",
+            validation_strategy in ("targeted", "fallback")
+            and (validation_strategy != "fallback" or "verify" in validation_argv)
+            and (validation_strategy != "targeted" or bool(json_array(test_run, "targeted_tests"))),
+            "validation records targeted-test or verify-fallback strategy",
+        )
+        self.result.require(
+            "validation", "actual-exit-code",
+            isinstance(field(test_run, "exit_code"), int)
+            and field(test_run, "exit_code") == field(test_run, "exit_code"),
+            "validation exit code is captured from command execution",
         )
         self.result.require(
             "validation", "test-status",
@@ -906,6 +942,18 @@ class Engine:
             and routing.get("graph_depth") in (0, 1)
             and routing.get("max_output_tokens") is not None,
             "applied route (profile / graph depth / max output tokens) is persisted",
+        )
+        effective_model = routing.get("model_or_deployment")
+        self.result.require(
+            "routing", "effective-model-identity",
+            bool(effective_model) and field(first_latest, "model") == effective_model,
+            "generation invocation uses the persisted routed model/deployment identity",
+        )
+        self.result.require(
+            "finops", "routed-pricing-identity",
+            field(first_latest, "estimated_max_cost") is not None
+            and field(first_latest, "actual_operational_cost_estimate") is not None,
+            "FinOps cost lookup uses the routed model/deployment identity",
         )
         self.result.require(
             "routing", "route-reason",
@@ -1046,6 +1094,32 @@ class Engine:
         VALIDATION_REQUIRED; reject leaves the reference source unchanged.
         """
         target_path = "shoppoc-app/src/main/java/com/shoppoc/app/web/GlobalExceptionHandler.java"
+        uploads_root = (REPO_ROOT / ".agent" / "uploads").resolve()
+        project_root = Path(self.project_root).resolve()
+        try:
+            project_root.relative_to(uploads_root)
+        except ValueError as exc:
+            raise AssertionError("fail probe requires a disposable uploaded project") from exc
+        self.fail_fixture = project_root / (
+            "shoppoc-app/src/test/java/com/shoppoc/app/web/"
+            "GlobalExceptionHandlerTest.java"
+        )
+        if not self.fail_fixture.is_file():
+            raise AssertionError("fail probe test fixture is missing")
+        self.fail_fixture_original = self.fail_fixture.read_text(encoding="utf-8")
+        closing = self.fail_fixture_original.rfind("}")
+        if closing < 0:
+            raise AssertionError("fail probe test fixture has no class boundary")
+        self.fail_fixture.write_text(
+            self.fail_fixture_original[:closing]
+            + "    @Test\n"
+            + "    void deterministicFailureProbe() {\n"
+            + "        throw new AssertionError(\"V1 validation failure probe\");\n"
+            + "    }\n"
+            + self.fail_fixture_original[closing:],
+            encoding="utf-8",
+        )
+        print(f"INFO  disposable Maven failure fixture = {self.fail_fixture.name}")
         root = self.args.source_dir or self.project_root
         target = get_safe_path(root, target_path)
         before_sha = sha256(target)
@@ -1093,6 +1167,59 @@ class Engine:
             "repair", "bounded",
             len(invocations) <= 1 + self.args.attempt_cap + 2,
             "repair attempts are bounded",
+        )
+        self.result.require(
+            "repair", "finops-token-budget",
+            all(
+                isinstance(field(inv, "estimated_input_tokens"), int)
+                and field(inv, "estimated_input_tokens") > 0
+                and field(inv, "count_method")
+                and field(inv, "threshold_result") in ("ok", "over", "not_configured")
+                for inv in repair_invocations
+            ),
+            "every repair invocation has token count, method, and threshold trace",
+        )
+        self.result.require(
+            "repair", "finops-budget-cost",
+            all(
+                field(inv, "max_output_tokens") is not None
+                and field(inv, "estimated_max_cost") is not None
+                for inv in repair_invocations
+            ),
+            "every repair invocation has output budget and estimated max cost",
+        )
+        self.result.require(
+            "repair", "usage",
+            all(
+                isinstance(field(inv, "prompt_tokens"), int)
+                and isinstance(field(inv, "completion_tokens"), int)
+                and field(inv, "actual_operational_cost_estimate") is not None
+                for inv in repair_invocations
+                if field(inv, "status") == "ok"
+            ),
+            "every successful repair invocation persists Azure usage and actual cost",
+        )
+        self.result.require(
+            "repair", "failed-trace",
+            all(
+                field(inv, "status") != "failed" or bool(field(inv, "error"))
+                for inv in repair_invocations
+            ),
+            "failed repair provider calls persist status and error",
+        )
+        self.result.require(
+            "repair", "attempt-numbers",
+            all(
+                isinstance(field(inv, "attempt_number"), int)
+                and 1 <= field(inv, "attempt_number") <= self.args.attempt_cap
+                for inv in repair_invocations
+            ),
+            "every repair invocation records a bounded attempt number",
+        )
+        self.result.require(
+            "repair", "same-run",
+            all(str(field(inv, "run_id")) == str(field(run, "id")) for inv in repair_invocations),
+            "every repair invocation remains attached to the failing run",
         )
         if test_status == "failed":
             accept_status, accept_body, _ = self.api.post(
@@ -1182,6 +1309,11 @@ class Engine:
                         print("INFO  pending plan cleanup: rejected")
                 except Exception as cleanup_exc:
                     print(f"WARN  pending plan cleanup failed: {cleanup_exc}")
+        finally:
+            if self.fail_fixture is not None and self.fail_fixture_original is not None:
+                self.fail_fixture.write_text(self.fail_fixture_original, encoding="utf-8")
+                self.fail_fixture = None
+                self.fail_fixture_original = None
         evidence_path = self.write_evidence()
         print(f"INFO  sanitized evidence = {evidence_path}")
         overall = self.overall_status()
@@ -1194,7 +1326,7 @@ class Engine:
         print(f"TARGET:      {self.target_rel}")
         for category in (
             "provenance", "config", "database", "migrations", "backend", "project",
-            "target", "index", "search", "graph", "context", "priority", "executor",
+            "target", "index", "lexical", "vector/hybrid", "graph", "context", "priority", "executor",
             "finops", "routing", "validation", "generation", "persistence", "reject",
             "accept", "immutable", "evidence",
         ):

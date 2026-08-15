@@ -15,6 +15,7 @@ Targeted test selection:
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import tempfile
@@ -99,19 +100,36 @@ def select_targeted_tests(
     return tests
 
 
-def build_maven_argv(project: ProjectConfig, tests: list[str]) -> list[str] | None:
-    """Shell-free Maven command; None when no tests and fallback disabled.
+def build_maven_argv(project: ProjectConfig, tests: list[str]) -> list[str]:
+    """Return a real shell-free Maven command for every validation path.
 
     Targeted tests run via ``-Dtest=`` on the reactor (all modules compile in
     dependency order, only the selected tests execute). When no targeted
-    tests exist, the project's test command runs only if the fallback is
-    configured as ``verify``.
+    tests exist, ``verify`` runs; a configured command containing ``verify``
+    is honored as the repository-defined variant.
     """
+    executable = "mvn.cmd" if os.name == "nt" else "mvn"
     if tests:
-        return ["mvn", "-q", f"-Dtest={','.join(tests)}", "test"]
-    from agent.config import Settings  # noqa: F401
+        return [
+            executable,
+            "-q",
+            f"-Dtest={','.join(tests)}",
+            "-DfailIfNoTests=false",
+            "test",
+        ]
+    from agent.safe_runner import split_command
 
-    return None
+    configured = (project.test_command or "").strip()
+    if configured:
+        try:
+            configured_argv = split_command(configured)
+        except ValueError:
+            configured_argv = []
+        if "verify" in configured_argv:
+            if os.name == "nt" and configured_argv[0].casefold() == "mvn":
+                configured_argv[0] = executable
+            return configured_argv
+    return [executable, "-q", "verify"]
 
 
 class ValidationWorkspace:
@@ -180,22 +198,14 @@ class ValidationService:
                 project, plan, self.store, project_version_id
             )
             argv = build_maven_argv(project, tests)
-            if argv is None and self.fallback == "verify":
-                from agent.safe_runner import split_command
-
-                argv = (
-                    split_command(project.test_command)
-                    if project.test_command and project.test_command.strip()
-                    else ["mvn", "-q", "verify"]
-                )
-            if argv is None:
-                return TestRunResult(
-                    command="",
-                    exit_code=0,
-                    output="No targeted tests selected and fallback disabled",
-                )
             command = " ".join(argv)
-            return self.test_runner._run(str(workspace.root), command, project.validation_timeout_seconds)
+            result = self.test_runner._run(
+                str(workspace.root), command, project.validation_timeout_seconds
+            )
+            return result.model_copy(update={
+                "strategy": "targeted" if tests else "fallback",
+                "targeted_tests": tests,
+            })
         finally:
             workspace.cleanup()
 

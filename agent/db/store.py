@@ -1267,19 +1267,22 @@ class PgStore:
         routing_reason: str | None = None,
         selected_context: dict | None = None,
         prompt_hash: str | None = None,
+        attempt_number: int | None = None,
+        context_indicator: str | None = None,
     ) -> dict:
         sql = (
             "INSERT INTO llm_invocations "
             "(run_id, provider, model, prompt_tokens, completion_tokens, total_tokens, "
             "status, error, count_method, estimated_input_tokens, effective_input_budget, "
             "threshold_result, reduction_outcome, max_output_tokens, estimated_max_cost, "
-            "actual_operational_cost_estimate, routing_reason, selected_context, prompt_hash) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "actual_operational_cost_estimate, routing_reason, selected_context, prompt_hash, "
+            "attempt_number, context_indicator) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "RETURNING id, run_id, provider, model, prompt_tokens, completion_tokens, "
             "total_tokens, status, error, count_method, estimated_input_tokens, "
             "effective_input_budget, threshold_result, reduction_outcome, max_output_tokens, "
             "estimated_max_cost, actual_operational_cost_estimate, routing_reason, "
-            "selected_context, prompt_hash, created_at"
+            "selected_context, prompt_hash, attempt_number, context_indicator, created_at"
         )
         params = (
             run_id, provider, model, prompt_tokens, completion_tokens, total_tokens,
@@ -1287,7 +1290,7 @@ class PgStore:
             threshold_result, reduction_outcome, max_output_tokens, estimated_max_cost,
             actual_operational_cost_estimate, routing_reason,
             Jsonb(selected_context) if selected_context is not None else None,
-            prompt_hash,
+            prompt_hash, attempt_number, context_indicator,
         )
         try:
             with self._connect() as conn:
@@ -1370,7 +1373,7 @@ class PgStore:
             "total_tokens, status, error, count_method, estimated_input_tokens, "
             "effective_input_budget, threshold_result, reduction_outcome, max_output_tokens, "
             "estimated_max_cost, actual_operational_cost_estimate, routing_reason, "
-            "selected_context, prompt_hash, created_at "
+            "selected_context, prompt_hash, attempt_number, context_indicator, created_at "
             "FROM llm_invocations WHERE run_id = %s ORDER BY created_at ASC, id ASC"
         )
         try:
