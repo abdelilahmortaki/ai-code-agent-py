@@ -38,6 +38,32 @@ agent:
       qwen.qwen3-coder-30b-a3b-v1:0:
         input_per_million: 0.50
         output_per_million: 1.00
+  # F4 smart routing (after provider selection). Profiles resolve to
+  # provider-local retrieval + generation knobs. model_overrides per provider
+  # map profile -> deployment/model id; when unset the configured default is
+  # used (the VM has a single real Azure deployment).
+  routing:
+    profiles:
+      economical:
+        graph_depth: 0
+        top_k: 5
+        max_related: 4
+        context_budget: 6000
+        max_context_files: 3
+        max_output_tokens: 8192
+      strong:
+        graph_depth: 1
+        top_k: 10
+        max_related: 8
+        context_budget: null
+        max_context_files: 6
+        max_output_tokens: 16384
+    policy:
+      P1: {LOW: strong, MEDIUM: strong, HIGH: strong}
+      P2: {LOW: strong, MEDIUM: strong, HIGH: strong}
+      P3: {LOW: economical, MEDIUM: economical, HIGH: strong}
+      P4: {LOW: economical, MEDIUM: economical, HIGH: economical}
+    model_overrides: {}
   projects: []              # empty — projects are added at runtime via Browse Folder
 
 # Optional PostgreSQL persistence (F1.1) — DISABLED by default.

@@ -880,6 +880,26 @@ class Engine:
             and field(first_latest, "actual_operational_cost_estimate") is not None,
             "pre-call estimated max cost and post-call actual cost are persisted",
         )
+        first_run = field(first_entry, "run")
+        self.result.require(
+            "routing", "complexity-label",
+            field(first_run, "complexity_label") in ("LOW", "MEDIUM", "HIGH"),
+            "deterministic complexity label is persisted on the run",
+        )
+        routing = field(first_run, "routing") or {}
+        self.result.require(
+            "routing", "applied-route",
+            bool(routing.get("profile"))
+            and routing.get("graph_depth") in (0, 1)
+            and routing.get("max_output_tokens") is not None,
+            "applied route (profile / graph depth / max output tokens) is persisted",
+        )
+        self.result.require(
+            "routing", "route-reason",
+            bool(field(first_latest, "routing_reason"))
+            and "->" in str(field(first_latest, "routing_reason")),
+            "routing reason is persisted and deterministic",
+        )
         status, body, _ = self.api.post(f"/api/agent/{self.project_id}/reject-plan")
         self.result.require(
             "reject", "first-http",

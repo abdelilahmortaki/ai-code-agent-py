@@ -6,7 +6,13 @@ from typing import Callable
 from agent.config import BedrockConfig, ProjectConfig, Settings
 from agent.guard import PromptGuardService
 from agent.models import PatchProposalPlan, TestFailureContext, UserStory
-from agent.providers import EmbeddingProvider, GenerationProvider, NormalizedUsage, ProviderCapabilities
+from agent.providers import (
+    EmbeddingProvider,
+    ExecutionOptions,
+    GenerationProvider,
+    NormalizedUsage,
+    ProviderCapabilities,
+)
 
 
 def _noop(msg: str) -> None:
@@ -52,6 +58,7 @@ class BedrockGenerationProvider:
         static_analysis: str,
         log_callback: Callable[[str], None] = _noop,
         validation_feedback: str = "",
+        options: ExecutionOptions | None = None,
     ) -> PatchProposalPlan:
         return self._service.generate_patch_plan(
             project,
@@ -60,14 +67,16 @@ class BedrockGenerationProvider:
             static_analysis,
             log_callback,
             validation_feedback=validation_feedback,
+            options=options,
         )
 
     def generate_fix_plan(
         self,
         ctx: TestFailureContext,
         log_callback: Callable[[str], None] = _noop,
+        options: ExecutionOptions | None = None,
     ) -> PatchProposalPlan:
-        return self._service.generate_fix_plan(ctx, log_callback)
+        return self._service.generate_fix_plan(ctx, log_callback, options=options)
 
     @property
     def last_usage(self) -> NormalizedUsage | None:

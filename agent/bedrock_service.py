@@ -10,6 +10,7 @@ from agent.config import BedrockConfig, ProjectConfig
 from agent.guard import PromptGuardService
 from agent.models import ProposalFile, PatchProposalPlan, TestFailureContext, UserStory
 from agent.patch_schema import PATCH_SCHEMA_HINT
+from agent.providers import ExecutionOptions
 
 _log = logging.getLogger(__name__)
 
@@ -128,15 +129,29 @@ class BedrockService:
         static_analysis: str,
         log_callback: Callable[[str], None] = _noop,
         validation_feedback: str = "",
+        options: ExecutionOptions | None = None,
     ) -> PatchProposalPlan:
         context = self.prompt_guard.build_prompt(
             project, story, relevant_files, static_analysis, validation_feedback
         )
-        plan = self._call(story.id, context.prompt + "\n\n" + _SCHEMA_HINT, log_callback)
+        model_id = options.model_or_deployment if options else None
+        max_tokens = options.max_output_tokens if options else None
+        plan = self._call(
+            story.id,
+            context.prompt + "\n\n" + _SCHEMA_HINT,
+            log_callback,
+            model_id=model_id or self.cfg.model_id,
+            max_tokens=max_tokens if max_tokens is not None else self.cfg.max_tokens,
+        )
         plan = self.prompt_guard.restore_plan(context, plan)
         return plan
 
-    def generate_fix_plan(self, ctx: TestFailureContext, log_callback: Callable[[str], None] = _noop) -> PatchProposalPlan:
+    def generate_fix_plan(
+        self,
+        ctx: TestFailureContext,
+        log_callback: Callable[[str], None] = _noop,
+        options: ExecutionOptions | None = None,
+    ) -> PatchProposalPlan:
         prompt = (
             "A previous patch failed.\n\n"
             f"storyId: {ctx.story_id}\n"
@@ -148,20 +163,35 @@ class BedrockService:
             f"STATIC_ANALYSIS:\n{self.prompt_guard.sanitize_for_fix(ctx.static_analysis_report)}\n\n"
             + _SCHEMA_HINT
         )
-        return self._call(ctx.story_id, prompt, log_callback)
+        model_id = options.model_or_deployment if options else None
+        max_tokens = options.max_output_tokens if options else None
+        return self._call(
+            ctx.story_id,
+            prompt,
+            log_callback,
+            model_id=model_id or self.cfg.model_id,
+            max_tokens=max_tokens if max_tokens is not None else self.cfg.max_tokens,
+        )
 
     # ------------------------------------------------------------------ private
 
-    def _call(self, story_id: str, prompt: str, log_callback: Callable[[str], None] = _noop) -> PatchProposalPlan:
+    def _call(
+        self,
+        story_id: str,
+        prompt: str,
+        log_callback: Callable[[str], None] = _noop,
+        model_id: str | None = None,
+        max_tokens: int | None = None,
+    ) -> PatchProposalPlan:
         self.last_usage = None
         log_callback("Connecting to AWS Bedrock…")
         response = self._client.converse_stream(
-            modelId=self.cfg.model_id,
+            modelId=model_id or self.cfg.model_id,
             system=[{"text": self._SYSTEM_PROMPT}],
             messages=[{"role": "user", "content": [{"text": prompt}]}],
             inferenceConfig={
                 "temperature": self.cfg.temperature,
-                "maxTokens": self.cfg.max_tokens,
+                "maxTokens": max_tokens or self.cfg.max_tokens,
             },
         )
 

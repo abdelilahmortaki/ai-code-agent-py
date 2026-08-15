@@ -675,12 +675,12 @@ class _FakeGenerationProvider:
     def build_prompt(self, project, story, relevant_files, static_analysis, validation_feedback=""):
         return "\n".join([story.title, *(content for _, content in relevant_files)])
 
-    def generate_patch_plan(self, project, story, relevant_files, static_analysis, log_callback, validation_feedback=""):
+    def generate_patch_plan(self, project, story, relevant_files, static_analysis, log_callback, validation_feedback="", options=None):
         from agent.models import PatchProposalPlan
 
         return PatchProposalPlan(storyId=story.id, summary="no-op", files=[])
 
-    def generate_fix_plan(self, ctx, log_callback):
+    def generate_fix_plan(self, ctx, log_callback, options=None):
         return self.generate_patch_plan(None, None, [], "", log_callback)
 
     def count_tokens(self, text):
