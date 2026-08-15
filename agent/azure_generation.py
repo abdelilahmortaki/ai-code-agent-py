@@ -9,7 +9,7 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, 
 from agent.config import ProjectConfig
 from agent.guard import PromptGuardService
 from agent.models import ProposalFile, PatchProposalPlan, TestFailureContext, UserStory
-from agent.providers import NormalizedUsage, ProviderCapabilities
+from agent.providers import ExecutionOptions, NormalizedUsage, ProviderCapabilities
 from agent.patch_schema import PATCH_PLAN_SCHEMA, PATCH_SCHEMA_HINT
 
 
@@ -107,11 +107,20 @@ class AzureOpenAIGenerationProvider:
         static_analysis: str,
         log_callback: Callable[[str], None] = _noop,
         validation_feedback: str = "",
+        options: ExecutionOptions | None = None,
     ) -> PatchProposalPlan:
         context = self._prompt_guard.build_prompt(
             project, story, relevant_files, static_analysis, validation_feedback
         )
-        plan = self._generate(story.id, context.prompt, log_callback)
+        model = options.model_or_deployment if options else None
+        max_output = options.max_output_tokens if options else None
+        plan = self._generate(
+            story.id,
+            context.prompt,
+            log_callback,
+            model=model or self.model_identity,
+            max_output_tokens=max_output if max_output is not None else self.max_output_tokens,
+        )
         plan = self._prompt_guard.restore_plan(context, plan)
         return plan
 
@@ -119,6 +128,7 @@ class AzureOpenAIGenerationProvider:
         self,
         ctx: TestFailureContext,
         log_callback: Callable[[str], None] = _noop,
+        options: ExecutionOptions | None = None,
     ) -> PatchProposalPlan:
         prompt = (
             "A previous patch failed.\n\n"
@@ -131,7 +141,15 @@ class AzureOpenAIGenerationProvider:
             f"STATIC_ANALYSIS:\n{self._prompt_guard.sanitize_for_fix(ctx.static_analysis_report)}\n\n"
             + _SCHEMA_HINT
         )
-        return self._generate(ctx.story_id, prompt, log_callback)
+        model = options.model_or_deployment if options else None
+        max_output = options.max_output_tokens if options else None
+        return self._generate(
+            ctx.story_id,
+            prompt,
+            log_callback,
+            model=model or self.model_identity,
+            max_output_tokens=max_output if max_output is not None else self.max_output_tokens,
+        )
 
     @staticmethod
     def normalize_usage(usage: object | None) -> NormalizedUsage | None:
@@ -165,6 +183,8 @@ class AzureOpenAIGenerationProvider:
         story_id: str,
         prompt: str,
         log_callback: Callable[[str], None],
+        model: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> PatchProposalPlan:
         self.last_usage = None
         log_callback("Connecting to Azure OpenAI…")
@@ -172,7 +192,7 @@ class AzureOpenAIGenerationProvider:
         response = None
         try:
             stream = self._client.responses.create(
-                model=self.model_identity,
+                model=model or self.model_identity,
                 instructions=_SYSTEM_PROMPT,
                 input=[{"role": "user", "content": [{"type": "input_text", "text": prompt + "\n\n" + _SCHEMA_HINT}]}],
                 text={
@@ -183,7 +203,7 @@ class AzureOpenAIGenerationProvider:
                         "schema": _SCHEMA,
                     }
                 },
-                max_output_tokens=self.max_output_tokens,
+                max_output_tokens=max_output_tokens,
                 stream=True,
             )
             log_callback("Model is generating…")

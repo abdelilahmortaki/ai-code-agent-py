@@ -1141,6 +1141,8 @@ class PgStore:
         story_snapshot: dict,
         priority: str,
         complexity: int | None = None,
+        complexity_label: str | None = None,
+        routing: dict | None = None,
     ) -> dict:
         if not project_id or not priority:
             raise ValueError("project_id and priority must be non-empty")
@@ -1148,17 +1150,28 @@ class PgStore:
             raise ValueError("complexity must be an integer or None")
         sql = (
             "INSERT INTO runs "
-            "(project_id, project_version_id, story_snapshot, priority, complexity, status) "
-            "VALUES (%s, %s, %s, %s, %s, %s) "
+            "(project_id, project_version_id, story_snapshot, priority, complexity, "
+            "complexity_label, routing, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
             "RETURNING id, project_id, project_version_id, story_snapshot, priority, "
-            "complexity, status, test_status, human_decision, error, created_at, completed_at"
+            "complexity, complexity_label, routing, status, test_status, "
+            "human_decision, error, created_at, completed_at"
         )
         try:
             with self._connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         sql,
-                        (project_id, project_version_id, Jsonb(story_snapshot), priority, complexity, "running"),
+                        (
+                            project_id,
+                            project_version_id,
+                            Jsonb(story_snapshot),
+                            priority,
+                            complexity,
+                            complexity_label,
+                            Jsonb(routing) if routing is not None else None,
+                            "running",
+                        ),
                     )
                     return dict(cur.fetchone())
         except psycopg.Error as exc:
@@ -1169,6 +1182,8 @@ class PgStore:
         run_id: str,
         status: str,
         complexity: int | None = None,
+        complexity_label: str | None = None,
+        routing: dict | None = None,
         test_status: str | None = None,
         human_decision: str | None = None,
         error: str | None = None,
@@ -1188,13 +1203,17 @@ class PgStore:
         params: list = [status]
         for column, value in (
             ("complexity", complexity),
+            ("complexity_label", complexity_label),
+            ("routing", routing),
             ("test_status", test_status),
             ("human_decision", human_decision),
             ("error", error),
         ):
             if value is not None:
                 sets.append(f"{column} = %s")
-                params.append(value)
+                params.append(
+                    Jsonb(value) if column == "routing" else value
+                )
         if status in {"completed", "failed", "superseded"}:
             sets.append("completed_at = COALESCE(completed_at, now())")
         sql = (
@@ -1202,7 +1221,8 @@ class PgStore:
             + ", ".join(sets)
             + " WHERE id = %s "
             "RETURNING id, project_id, project_version_id, story_snapshot, priority, "
-            "complexity, status, test_status, human_decision, error, created_at, completed_at"
+            "complexity, complexity_label, routing, status, test_status, "
+            "human_decision, error, created_at, completed_at"
         )
         params.append(run_id)
         try:
@@ -1281,7 +1301,8 @@ class PgStore:
         """Return a run row by id, or None if it does not exist."""
         sql = (
             "SELECT id, project_id, project_version_id, story_snapshot, priority, "
-            "complexity, status, test_status, human_decision, error, created_at, completed_at "
+            "complexity, complexity_label, routing, status, test_status, "
+            "human_decision, error, created_at, completed_at "
             "FROM runs WHERE id = %s"
         )
         try:
@@ -1299,7 +1320,8 @@ class PgStore:
             raise ValueError("limit must be positive")
         sql = (
             "SELECT id, project_id, project_version_id, story_snapshot, priority, "
-            "complexity, status, test_status, human_decision, error, created_at, completed_at "
+            "complexity, complexity_label, routing, status, test_status, "
+            "human_decision, error, created_at, completed_at "
             "FROM runs ORDER BY created_at DESC, id DESC LIMIT %s"
         )
         try:

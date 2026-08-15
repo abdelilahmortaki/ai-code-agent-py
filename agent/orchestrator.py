@@ -32,7 +32,13 @@ from agent.models import (
 from agent.materializer import PatchMaterializer
 from agent.paths import resolve_within
 from agent.patch import PatchApplierService
-from agent.providers import GenerationProvider
+from agent.providers import ExecutionOptions, GenerationProvider
+from agent.routing import (
+    RouteDecision,
+    RoutingConfig,
+    build_route_decision,
+    compute_complexity,
+)
 from agent.runner import TestRunner
 from agent.stories import StoryFileReader
 
@@ -192,6 +198,8 @@ class AgentOrchestrator:
         log: Callable[[str], None],
         run_id: str | None = None,
         context_bundle: ContextBundle | None = None,
+        options: ExecutionOptions | None = None,
+        routing_reason: str = "default configured provider/model",
     ) -> tuple[PatchPlan, int]:
         feedback = ""
         for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
@@ -199,7 +207,8 @@ class AgentOrchestrator:
             finops = None
             try:
                 files, finops = self._finops_prepare(
-                    project, story, relevant_files, static_analysis, feedback, context_bundle
+                    project, story, relevant_files, static_analysis, feedback,
+                    context_bundle, routing_reason=routing_reason, options=options,
                 )
                 proposal = self.generation_provider.generate_patch_plan(
                     project,
@@ -208,6 +217,7 @@ class AgentOrchestrator:
                     static_analysis,
                     log,
                     validation_feedback=feedback,
+                    options=options,
                 )
             except FinOpsStoppedError as exc:
                 self._record_llm_invocation(
@@ -245,6 +255,8 @@ class AgentOrchestrator:
         static_analysis: str,
         validation_feedback: str,
         context_bundle: ContextBundle | None,
+        routing_reason: str = "default configured provider/model",
+        options: ExecutionOptions | None = None,
     ) -> tuple[list[tuple[str, str]], dict]:
         """Build the ACTUAL final prompt, count it, enforce the effective
         input budget and reduce context boundedly before any provider call.
@@ -262,7 +274,12 @@ class AgentOrchestrator:
         budget = compute_effective_budget(limits)
         max_rounds = max(0, cfg.finops_max_reduction_rounds)
         model = getattr(provider, "model_identity", "") or ""
-        max_output = getattr(provider, "max_output_tokens", None)
+        routed_model = options.model_or_deployment if options else None
+        max_output = (
+            options.max_output_tokens
+            if options and options.max_output_tokens is not None
+            else getattr(provider, "max_output_tokens", None)
+        )
 
         files = list(relevant_files)
         rounds = 0
@@ -281,7 +298,7 @@ class AgentOrchestrator:
                 )
                 or "none",
                 "max_output_tokens": max_output,
-                "routing_reason": "default configured provider/model",
+                "routing_reason": routing_reason,
             }
 
         while True:
@@ -326,11 +343,10 @@ class AgentOrchestrator:
         costs = compute_costs(
             cfg.finops_pricing, provider.provider_name, model, count, None, max_output
         )
-        routing_reason = "default configured provider/model"
         selected_context = self._sanitized_context(context_bundle)
         trace = {
             "provider": provider.provider_name,
-            "model": model,
+            "model": routed_model or model,
             "count_method": method,
             "estimated_input_tokens": count,
             "effective_input_budget": budget,
@@ -386,10 +402,12 @@ class AgentOrchestrator:
 
         context_bundle: ContextBundle | None = None
         retrieval_mode = "legacy"
+        options: ExecutionOptions | None = None
+        route: RouteDecision | None = None
 
         if self._hybrid_available(project):
-            retrieval_mode, context_bundle, relevant_files = self._hybrid_context(
-                project, story, log
+            retrieval_mode, context_bundle, relevant_files, route, options = self._hybrid_context(
+                project, story, log, run_id=run_id
             )
         else:
             log("Hybrid index unavailable — using legacy semantic context")
@@ -423,6 +441,8 @@ class AgentOrchestrator:
         plan, attempts_used = self._generate_patch_plan(
             project, story, relevant_files, pre_analysis.report, log,
             run_id=run_id, context_bundle=context_bundle,
+            options=options,
+            routing_reason=(route.reason if route else "default configured provider/model"),
         )
         ops = ", ".join(sorted({f.operation for f in plan.files})) or "none"
         log(f"Patch plan: {len(plan.files)} file(s) [{ops}] — {plan.summary}")
@@ -479,27 +499,70 @@ class AgentOrchestrator:
         except Exception:
             return None
 
-    def _hybrid_context(self, project, story: UserStory, log: Callable[[str], None]) -> tuple[str, ContextBundle, list[tuple[str, str]]]:
-        """Hybrid retrieval → Context Builder → full selected files.
+    def _complexity(self, story: UserStory, retrieval: dict | None, selected_files: list[str]) -> tuple[str, int]:
+        return compute_complexity(self._story_query(story), retrieval, selected_files)
 
-        Never falls back to legacy here: hybrid was already confirmed
-        available. Generation-provider errors must propagate (not be masked).
+    def _hybrid_context(
+        self,
+        project,
+        story: UserStory,
+        log: Callable[[str], None],
+        run_id: str | None = None,
+    ) -> tuple[str, ContextBundle, list[tuple[str, str]], RouteDecision | None, ExecutionOptions | None]:
+        """Routing-aware hybrid retrieval → Context Builder → full files.
+
+        Pass 1 uses the configured default knobs so deterministic complexity
+        can be scored from real retrieval evidence. Pass 2 applies the routed
+        graph depth / top_k / context budget / generation options.
         """
         log("Using hybrid symbol context")
         query_text = self._story_query(story)
-        result = self.hybrid_retrieval.retrieve(
+
+        first = self.hybrid_retrieval.retrieve(
             project.id,
             query_text,
             top_k=self.config.hybrid_retrieval_top_k,
             graph_depth=self.config.hybrid_graph_depth,
             max_related=self.config.hybrid_max_related,
         )
+        complexity_label, complexity_tier = self._complexity(
+            story, first, [item.get("file_path") or "" for item in first.get("items", [])]
+        )
+        route = build_route_decision(
+            priority=story.priority,
+            complexity_label=complexity_label,
+            routing=RoutingConfig(
+                profiles=self.config.routing_profiles,
+                policy=self.config.routing_policy,
+            ),
+            provider_name=self.generation_provider.provider_name,
+            configured_model=getattr(self.generation_provider, "model_identity", ""),
+            model_overrides=self.config.routing_model_overrides,
+        )
+        log(
+            f"Routing: {story.priority} + {complexity_label} -> {route.profile} "
+            f"(graph depth {route.graph_depth}, budget {route.context_budget}, "
+            f"max tokens {route.max_output_tokens})"
+        )
+        self._set_run_route(run_id, complexity_label, complexity_tier, route, log)
+
+        result = self.hybrid_retrieval.retrieve(
+            project.id,
+            query_text,
+            top_k=route.top_k,
+            graph_depth=route.graph_depth,
+            max_related=route.max_related,
+        )
         bundle = self.context_builder.build(
             project=project,
             query=query_text,
             retrieval=result,
-            estimated_token_budget=self.config.hybrid_context_budget,
-            max_context_files=self.config.max_context_files,
+            estimated_token_budget=(
+                route.context_budget
+                if route.context_budget is not None
+                else self.config.hybrid_context_budget
+            ),
+            max_context_files=route.max_context_files,
         )
         log(
             f"Context: {bundle.included_count} symbol(s) from "
@@ -510,7 +573,42 @@ class AgentOrchestrator:
             (path, bundle.file_contents.get(path, ""))
             for path in bundle.selected_files
         ]
-        return "hybrid", bundle, relevant_files
+        options = ExecutionOptions(
+            model_or_deployment=route.model_or_deployment,
+            max_output_tokens=route.max_output_tokens,
+        )
+        return "hybrid", bundle, relevant_files, route, options
+
+    def _set_run_route(
+        self,
+        run_id: str | None,
+        complexity_label: str,
+        complexity_tier: int,
+        route: RouteDecision,
+        log: Callable[[str], None],
+    ) -> None:
+        if run_id is None or self.store is None:
+            return
+        try:
+            self.store.update_run_status(
+                run_id,
+                "running",
+                complexity=complexity_tier,
+                complexity_label=complexity_label,
+                routing={
+                    "profile": route.profile,
+                    "graph_depth": route.graph_depth,
+                    "top_k": route.top_k,
+                    "max_related": route.max_related,
+                    "context_budget": route.context_budget,
+                    "max_context_files": route.max_context_files,
+                    "max_output_tokens": route.max_output_tokens,
+                    "model_or_deployment": route.model_or_deployment,
+                    "reason": route.reason,
+                },
+            )
+        except Exception as exc:
+            log(f"Run routing persistence skipped: {exc}")
 
     # ------------------------------------------------------------------ run persistence (best-effort)
 
@@ -566,7 +664,7 @@ class AgentOrchestrator:
             return
         try:
             provider = getattr(self.generation_provider, "provider_name", None)
-            model = getattr(self.generation_provider, "model_identity", None)
+            model = (finops or {}).get("model") or getattr(self.generation_provider, "model_identity", None)
             usage = usage or {}
             self.store.insert_llm_invocation(
                 run_id,

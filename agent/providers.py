@@ -28,6 +28,18 @@ class ProviderCapabilities:
     notes: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class ExecutionOptions:
+    """Per-request provider-local execution override (F4.4).
+
+    Provider-neutral typed fields; each implementation maps them to its
+    native call. ``None`` values fall back to constructor configuration.
+    """
+
+    model_or_deployment: str | None = None
+    max_output_tokens: int | None = None
+
+
 class GenerationProvider(Protocol):
     def build_prompt(
         self,
@@ -52,12 +64,14 @@ class GenerationProvider(Protocol):
         static_analysis: str,
         log_callback: Callable[[str], None],
         validation_feedback: str = "",
+        options: ExecutionOptions | None = None,
     ) -> PatchProposalPlan: ...
 
     def generate_fix_plan(
         self,
         ctx: TestFailureContext,
         log_callback: Callable[[str], None],
+        options: ExecutionOptions | None = None,
     ) -> PatchProposalPlan: ...
 
     @property

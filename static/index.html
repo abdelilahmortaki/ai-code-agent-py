@@ -900,29 +900,37 @@ function renderFinOps(projectId) {
     .then(res => res.json())
     .then(entries => {
       const entry = (entries || []).find(e => e.run && e.run.project_id === projectId);
+      const run = entry ? entry.run : null;
+      const routing = run && run.routing ? run.routing : null;
       const inv = entry && entry.invocations && entry.invocations.length
         ? entry.invocations[entry.invocations.length - 1] : null;
-      if (!inv) {
+      if (!inv && !routing) {
         el.innerHTML = `<div class="empty"><span>No FinOps trace persisted for this run</span></div>`;
         return;
       }
       const fmt = v => v == null ? '—' : (typeof v === 'number' ? v.toLocaleString() : String(v));
       const row = (label, value, extra) =>
         `<div style="display:flex;gap:8px;align-items:baseline"><span style="width:220px;color:var(--text-dim);font-size:12px">${label}</span><b style="color:var(--text)">${fmt(value)}</b>${extra||''}</div>`;
-      const thrBadge = inv.threshold_result === 'ok'
+      const thrBadge = inv && inv.threshold_result === 'ok'
         ? `<span class="badge bs">ALLOW</span>`
-        : inv.threshold_result === 'over'
+        : inv && inv.threshold_result === 'over'
         ? `<span class="badge bw">OVER</span>`
-        : `<span class="badge bw">${fmt(inv.threshold_result)}</span>`;
-      el.innerHTML = `
-        <div class="ctx-summary">
-          ${thrBadge}
-          <span style="color:var(--text-dim)">Provider: <b style="color:var(--text)">${fmt(inv.provider)}</b></span>
-          <span style="color:var(--text-dim)">Model: <b style="color:var(--text)">${fmt(inv.model)}</b></span>
-          <span style="color:var(--text-dim)">Status: <b style="color:var(--text)">${fmt(inv.status)}</b></span>
-          <span style="flex:1"></span>
-        </div>
+        : `<span class="badge bw">${fmt(inv && inv.threshold_result)}</span>`;
+      const routingBlock = routing
+        ? `<div class="ctx-summary" style="border-bottom:1px solid var(--border);display:block;padding:8px 0">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Routing (F4)</div>
+            ${row('Priority', run.priority)}
+            ${row('Complexity', run.complexity_label)}
+            ${row('Profile', routing.profile)}
+            ${row('Graph depth', routing.graph_depth)}
+            ${row('Context budget', routing.context_budget)}
+            ${row('Max output tokens', routing.max_output_tokens)}
+            ${row('Model/deployment', routing.model_or_deployment)}
+            ${row('Reason', routing.reason)}
+          </div>` : '';
+      const finopsBlock = inv ? `
         <div class="ctx-summary" style="border-bottom:1px solid var(--border);display:block;padding:8px 0">
+          <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">FinOps (F3)</div>
           ${row('Count method', inv.count_method)}
           ${row('Estimated input tokens', inv.estimated_input_tokens)}
           ${row('Effective input budget', inv.effective_input_budget)}
@@ -934,7 +942,17 @@ function renderFinOps(projectId) {
           ${row('Actual operational cost (USD)', inv.actual_operational_cost_estimate)}
           ${row('Routing reason', inv.routing_reason)}
         </div>
-        <div style="padding:6px 0;font-size:11px;color:var(--text-dim)">Prompt hash: <code>${fmt(inv.prompt_hash)}</code></div>`;
+        <div style="padding:6px 0;font-size:11px;color:var(--text-dim)">Prompt hash: <code>${fmt(inv.prompt_hash)}</code></div>` : '';
+      el.innerHTML = `
+        <div class="ctx-summary">
+          ${thrBadge}
+          <span style="color:var(--text-dim)">Provider: <b style="color:var(--text)">${fmt(inv && inv.provider)}</b></span>
+          <span style="color:var(--text-dim)">Model: <b style="color:var(--text)">${fmt(inv && inv.model)}</b></span>
+          <span style="color:var(--text-dim)">Status: <b style="color:var(--text)">${fmt(inv && inv.status)}</b></span>
+          <span style="flex:1"></span>
+        </div>
+        ${routingBlock}
+        ${finopsBlock}`;
     })
     .catch(() => { el.innerHTML = `<div class="empty"><span>FinOps trace unavailable</span></div>`; });
 }

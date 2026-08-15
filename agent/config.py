@@ -70,6 +70,11 @@ class AgentConfig(BaseModel):
     # Configured prices are the only source of cost estimates.
     finops_pricing: dict = {}
 
+    # F4 smart routing (after provider selection; never switches providers).
+    routing_profiles: dict = {}
+    routing_policy: dict = {}
+    routing_model_overrides: dict = {}
+
     def project_by_id(self, project_id: str) -> ProjectConfig:
         target_id = project_id or self.active_project
         if not target_id and self.projects:
@@ -162,8 +167,12 @@ class Settings(BaseModel):
 
         agent_data: dict = dict(data.get("agent", {}))
         projects_data: list = agent_data.pop("projects", [])
+        routing_data: dict = dict(agent_data.pop("routing", {}) or {})
         agent_cfg = AgentConfig(
             **agent_data,
+            routing_profiles=dict(routing_data.get("profiles") or {}),
+            routing_policy=dict(routing_data.get("policy") or {}),
+            routing_model_overrides=dict(routing_data.get("model_overrides") or {}),
             projects=[ProjectConfig(**p) for p in projects_data],
         )
         db_data: dict = dict(data.get("database", {}))
