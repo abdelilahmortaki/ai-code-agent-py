@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -8,6 +9,14 @@ from agent.config import AgentConfig
 from agent.analysis import StaticAnalysisService
 from agent.codebase import CodebaseService
 from agent.context import build_legacy_bundle
+from agent.finops import (
+    FinOpsStoppedError,
+    compute_costs,
+    compute_effective_budget,
+    count_prompt,
+    evaluate,
+    file_drop_order,
+)
 from agent.git_service import GitDiffService
 from agent.guard import PromptGuardService
 from agent.index import SemanticIndexService
@@ -49,6 +58,10 @@ _PRESERVATION_FEEDBACK = (
 def _noop(msg: str) -> None:
     """Default no-op log callback."""
     pass
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 class AgentOrchestrator:
@@ -178,23 +191,38 @@ class AgentOrchestrator:
         static_analysis: str,
         log: Callable[[str], None],
         run_id: str | None = None,
+        context_bundle: ContextBundle | None = None,
     ) -> tuple[PatchPlan, int]:
         feedback = ""
         for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
             log(f"Generation attempt {attempt}/{_MAX_GENERATION_ATTEMPTS}")
+            finops = None
             try:
+                files, finops = self._finops_prepare(
+                    project, story, relevant_files, static_analysis, feedback, context_bundle
+                )
                 proposal = self.generation_provider.generate_patch_plan(
                     project,
                     story,
-                    relevant_files,
+                    files,
                     static_analysis,
                     log,
                     validation_feedback=feedback,
                 )
-            except Exception:
-                self._record_llm_invocation(run_id, log, status="failed", error=_LLM_INVOCATION_ERROR)
+            except FinOpsStoppedError as exc:
+                self._record_llm_invocation(
+                    run_id, log, status="stopped", error=str(exc), finops=exc.finops
+                )
                 raise
-            self._record_llm_invocation(run_id, log, status="ok")
+            except Exception:
+                self._record_llm_invocation(
+                    run_id, log, status="failed", error=_LLM_INVOCATION_ERROR, finops=finops
+                )
+                raise
+            usage = getattr(self.generation_provider, "last_usage", None)
+            self._record_llm_invocation(
+                run_id, log, status="ok", usage=usage, finops=finops
+            )
             try:
                 plan = self.materializer.materialize(project, proposal)
                 self.prompt_guard.validate_materialized_minimality(project, plan, story)
@@ -208,6 +236,135 @@ class AgentOrchestrator:
             log("Proposal validated")
             return plan, attempt
         raise RuntimeError("Generation attempts exhausted")
+
+    def _finops_prepare(
+        self,
+        project,
+        story: UserStory,
+        relevant_files: list[tuple[str, str]],
+        static_analysis: str,
+        validation_feedback: str,
+        context_bundle: ContextBundle | None,
+    ) -> tuple[list[tuple[str, str]], dict]:
+        """Build the ACTUAL final prompt, count it, enforce the effective
+        input budget and reduce context boundedly before any provider call.
+
+        Returns (files_to_send, finops_trace). Raises FinOpsStoppedError
+        when the context cannot be reduced under budget (no provider call).
+        """
+        cfg = self.config
+        provider = self.generation_provider
+        limits = [
+            cfg.finops_ticket_token_limit,
+            cfg.finops_project_token_limit,
+            cfg.finops_model_token_limit,
+        ]
+        budget = compute_effective_budget(limits)
+        max_rounds = max(0, cfg.finops_max_reduction_rounds)
+        model = getattr(provider, "model_identity", "") or ""
+        max_output = getattr(provider, "max_output_tokens", None)
+
+        files = list(relevant_files)
+        rounds = 0
+        reduced_paths: list[str] = []
+
+        def _stop_trace(method: str, count: int, result: str) -> dict:
+            return {
+                "provider": provider.provider_name,
+                "model": model,
+                "count_method": method,
+                "estimated_input_tokens": count,
+                "effective_input_budget": budget,
+                "threshold_result": result,
+                "reduction_outcome": "; ".join(
+                    f"dropped {path}" for path in reduced_paths
+                )
+                or "none",
+                "max_output_tokens": max_output,
+                "routing_reason": "default configured provider/model",
+            }
+
+        while True:
+            prompt = provider.build_prompt(
+                project, story, files, static_analysis, validation_feedback
+            )
+            count, method = count_prompt(provider, prompt)
+            result = evaluate(count, budget)
+            if result == "ok":
+                break
+            if result == "not_configured":
+                break
+            if rounds >= max_rounds or context_bundle is None or len(files) <= 1:
+                raise FinOpsStoppedError(
+                    f"FINOPS_STOP: estimated input tokens {count} exceed effective "
+                    f"budget {budget}; context cannot be reduced further "
+                    f"(reduction rounds exhausted)",
+                    finops=_stop_trace(method, count, result),
+                )
+            drop_order = file_drop_order(context_bundle.items)
+            to_drop = next(
+                (path for path in drop_order if any(p == path for p, _ in files)),
+                None,
+            )
+            if to_drop is None:
+                raise FinOpsStoppedError(
+                    f"FINOPS_STOP: estimated input tokens {count} exceed effective "
+                    f"budget {budget}; no further low-value context to drop",
+                    finops=_stop_trace(method, count, result),
+                )
+            files = [(p, c) for p, c in files if p != to_drop]
+            reduced_paths.append(to_drop)
+            rounds += 1
+
+        if reduced_paths:
+            reduction_outcome = "; ".join(f"dropped {path}" for path in reduced_paths)
+        elif result == "not_configured":
+            reduction_outcome = "no_limits"
+        else:
+            reduction_outcome = "none"
+
+        costs = compute_costs(
+            cfg.finops_pricing, provider.provider_name, model, count, None, max_output
+        )
+        routing_reason = "default configured provider/model"
+        selected_context = self._sanitized_context(context_bundle)
+        trace = {
+            "provider": provider.provider_name,
+            "model": model,
+            "count_method": method,
+            "estimated_input_tokens": count,
+            "effective_input_budget": budget,
+            "threshold_result": result,
+            "reduction_outcome": reduction_outcome,
+            "max_output_tokens": max_output,
+            "estimated_max_cost": costs["estimated_max_cost"],
+            "actual_operational_cost_estimate": costs["actual_operational_cost_estimate"],
+            "routing_reason": routing_reason,
+            "selected_context": selected_context,
+            "prompt_hash": _sha256(prompt),
+            "reduction_rounds": rounds,
+        }
+        return files, trace
+
+    @staticmethod
+    def _sanitized_context(bundle: ContextBundle | None) -> dict | None:
+        """Persistable context summary: paths + evidence, never source code."""
+        if bundle is None:
+            return None
+        return {
+            "selected_files": list(bundle.selected_files),
+            "items": [
+                {
+                    "qualified_name": item.qualified_name,
+                    "symbol_type": item.symbol_type,
+                    "file_path": item.file_path,
+                    "source": item.source,
+                    "priority": item.priority,
+                    "reasons": list(item.reasons),
+                }
+                for item in bundle.items
+            ],
+        }
 
     def _run(self, project, story: UserStory, log: Callable[[str], None] = _noop) -> PatchResult:
         previous = self._pending_plans.pop(project.id, None)
@@ -264,7 +421,8 @@ class AgentOrchestrator:
             )
 
         plan, attempts_used = self._generate_patch_plan(
-            project, story, relevant_files, pre_analysis.report, log, run_id=run_id
+            project, story, relevant_files, pre_analysis.report, log,
+            run_id=run_id, context_bundle=context_bundle,
         )
         ops = ", ".join(sorted({f.operation for f in plan.files})) or "none"
         log(f"Patch plan: {len(plan.files)} file(s) [{ops}] — {plan.summary}")
@@ -401,14 +559,37 @@ class AgentOrchestrator:
         log: Callable[[str], None],
         status: str,
         error: str | None = None,
+        usage: dict | None = None,
+        finops: dict | None = None,
     ) -> None:
         if run_id is None or self.store is None:
             return
         try:
             provider = getattr(self.generation_provider, "provider_name", None)
             model = getattr(self.generation_provider, "model_identity", None)
+            usage = usage or {}
             self.store.insert_llm_invocation(
-                run_id, provider=provider, model=model, status=status, error=error
+                run_id,
+                provider=provider,
+                model=model,
+                status=status,
+                error=error,
+                prompt_tokens=usage.get("input_tokens"),
+                completion_tokens=usage.get("output_tokens"),
+                total_tokens=usage.get("total_tokens"),
+                count_method=(finops or {}).get("count_method"),
+                estimated_input_tokens=(finops or {}).get("estimated_input_tokens"),
+                effective_input_budget=(finops or {}).get("effective_input_budget"),
+                threshold_result=(finops or {}).get("threshold_result"),
+                reduction_outcome=(finops or {}).get("reduction_outcome"),
+                max_output_tokens=(finops or {}).get("max_output_tokens"),
+                estimated_max_cost=(finops or {}).get("estimated_max_cost"),
+                actual_operational_cost_estimate=(finops or {}).get(
+                    "actual_operational_cost_estimate"
+                ),
+                routing_reason=(finops or {}).get("routing_reason"),
+                selected_context=(finops or {}).get("selected_context"),
+                prompt_hash=(finops or {}).get("prompt_hash"),
             )
         except Exception as exc:
             log(f"Invocation persistence skipped: {exc}")

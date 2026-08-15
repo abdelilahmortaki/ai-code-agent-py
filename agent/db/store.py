@@ -1233,17 +1233,46 @@ class PgStore:
         model: str | None = None,
         status: str | None = None,
         error: str | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
+        count_method: str | None = None,
+        estimated_input_tokens: int | None = None,
+        effective_input_budget: int | None = None,
+        threshold_result: str | None = None,
+        reduction_outcome: str | None = None,
+        max_output_tokens: int | None = None,
+        estimated_max_cost: float | None = None,
+        actual_operational_cost_estimate: float | None = None,
+        routing_reason: str | None = None,
+        selected_context: dict | None = None,
+        prompt_hash: str | None = None,
     ) -> dict:
         sql = (
-            "INSERT INTO llm_invocations (run_id, provider, model, status, error) "
-            "VALUES (%s, %s, %s, %s, %s) "
+            "INSERT INTO llm_invocations "
+            "(run_id, provider, model, prompt_tokens, completion_tokens, total_tokens, "
+            "status, error, count_method, estimated_input_tokens, effective_input_budget, "
+            "threshold_result, reduction_outcome, max_output_tokens, estimated_max_cost, "
+            "actual_operational_cost_estimate, routing_reason, selected_context, prompt_hash) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "RETURNING id, run_id, provider, model, prompt_tokens, completion_tokens, "
-            "total_tokens, status, error, created_at"
+            "total_tokens, status, error, count_method, estimated_input_tokens, "
+            "effective_input_budget, threshold_result, reduction_outcome, max_output_tokens, "
+            "estimated_max_cost, actual_operational_cost_estimate, routing_reason, "
+            "selected_context, prompt_hash, created_at"
+        )
+        params = (
+            run_id, provider, model, prompt_tokens, completion_tokens, total_tokens,
+            status, error, count_method, estimated_input_tokens, effective_input_budget,
+            threshold_result, reduction_outcome, max_output_tokens, estimated_max_cost,
+            actual_operational_cost_estimate, routing_reason,
+            Jsonb(selected_context) if selected_context is not None else None,
+            prompt_hash,
         )
         try:
             with self._connect() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(sql, (run_id, provider, model, status, error))
+                    cur.execute(sql, params)
                     return dict(cur.fetchone())
         except psycopg.Error as exc:
             raise PgStoreError("failed to insert llm invocation") from exc
@@ -1285,7 +1314,10 @@ class PgStore:
         """Return every llm_invocations row linked to a run, oldest first."""
         sql = (
             "SELECT id, run_id, provider, model, prompt_tokens, completion_tokens, "
-            "total_tokens, status, error, created_at "
+            "total_tokens, status, error, count_method, estimated_input_tokens, "
+            "effective_input_budget, threshold_result, reduction_outcome, max_output_tokens, "
+            "estimated_max_cost, actual_operational_cost_estimate, routing_reason, "
+            "selected_context, prompt_hash, created_at "
             "FROM llm_invocations WHERE run_id = %s ORDER BY created_at ASC, id ASC"
         )
         try:

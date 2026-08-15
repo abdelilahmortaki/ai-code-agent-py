@@ -20,6 +20,24 @@ agent:
   upload_allowed_extensions: [java, xml, yml, yaml, properties, json, md, txt]
   upload_max_file_bytes: 153600
   upload_max_total_bytes: 10485760
+  # F3 FinOps guardrail — per-invocation input/context limits.
+  # effective_input_budget = min(ticket, project, model). unset (null) = no limit.
+  finops_ticket_token_limit: null
+  finops_project_token_limit: null
+  finops_model_token_limit: null
+  finops_max_reduction_rounds: 3
+  # TEST pricing values — NOT authoritative cloud prices. Configure real
+  # prices here before relying on cost estimates in production; unconfigured
+  # models report cost "unavailable" instead of a fabricated number.
+  finops_pricing:
+    azure:
+      gpt-5-mini:
+        input_per_million: 1.10
+        output_per_million: 4.40
+    bedrock:
+      qwen.qwen3-coder-30b-a3b-v1:0:
+        input_per_million: 0.50
+        output_per_million: 1.00
   projects: []              # empty — projects are added at runtime via Browse Folder
 
 # Optional PostgreSQL persistence (F1.1) — DISABLED by default.

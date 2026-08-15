@@ -28,6 +28,22 @@ class BedrockGenerationProvider:
         self._service = service
         self.model_identity = config.model_id
 
+    def build_prompt(
+        self,
+        project: ProjectConfig,
+        story: UserStory,
+        relevant_files: list[tuple[str, str]],
+        static_analysis: str,
+        validation_feedback: str = "",
+    ) -> str:
+        return self._service.build_prompt(
+            project,
+            story,
+            relevant_files,
+            static_analysis,
+            validation_feedback=validation_feedback,
+        )
+
     def generate_patch_plan(
         self,
         project: ProjectConfig,
@@ -122,6 +138,7 @@ def create_provider_runtime(settings: Settings, prompt_guard: PromptGuardService
                 api_key,
                 azure.deployment,
                 prompt_guard,
+                max_output_tokens=azure.max_output_tokens,
             ),
             embedding=AzureOpenAIEmbeddingProvider(
                 azure.endpoint,

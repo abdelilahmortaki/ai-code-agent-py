@@ -847,6 +847,39 @@ class Engine:
             and bool(str(field(first_latest, "model"))),
             "first linked latest LLM invocation is ok, Azure, and has a deployment/model",
         )
+        self.result.require(
+            "finops", "count-method",
+            bool(field(first_latest, "count_method")),
+            "FinOps count method is persisted",
+        )
+        self.result.require(
+            "finops", "estimated-input-tokens",
+            isinstance(field(first_latest, "estimated_input_tokens"), int)
+            and field(first_latest, "estimated_input_tokens") > 0,
+            "estimated input tokens are persisted",
+        )
+        self.result.require(
+            "finops", "usage-persisted",
+            isinstance(field(first_latest, "prompt_tokens"), int)
+            and isinstance(field(first_latest, "completion_tokens"), int),
+            "actual Azure input/output token usage is persisted",
+        )
+        self.result.require(
+            "finops", "routing-reason",
+            bool(field(first_latest, "routing_reason")),
+            "routing reason is persisted",
+        )
+        self.result.require(
+            "finops", "threshold-result",
+            field(first_latest, "threshold_result") in ("ok", "over", "not_configured"),
+            "threshold result is persisted",
+        )
+        self.result.require(
+            "finops", "cost-estimate",
+            field(first_latest, "estimated_max_cost") is not None
+            and field(first_latest, "actual_operational_cost_estimate") is not None,
+            "pre-call estimated max cost and post-call actual cost are persisted",
+        )
         status, body, _ = self.api.post(f"/api/agent/{self.project_id}/reject-plan")
         self.result.require(
             "reject", "first-http",

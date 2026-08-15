@@ -672,6 +672,9 @@ class _FakeGenerationProvider:
     provider_name = "fake"
     model_identity = "fake-model"
 
+    def build_prompt(self, project, story, relevant_files, static_analysis, validation_feedback=""):
+        return "\n".join([story.title, *(content for _, content in relevant_files)])
+
     def generate_patch_plan(self, project, story, relevant_files, static_analysis, log_callback, validation_feedback=""):
         from agent.models import PatchProposalPlan
 
