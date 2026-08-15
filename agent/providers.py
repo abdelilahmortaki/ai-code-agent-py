@@ -74,13 +74,17 @@ class GenerationProvider(Protocol):
         options: ExecutionOptions | None = None,
     ) -> PatchProposalPlan: ...
 
+    def build_fix_prompt(self, ctx: TestFailureContext) -> str: ...
+
     @property
     def provider_name(self) -> str: ...
 
     @property
     def model_identity(self) -> str: ...
 
-    def count_tokens(self, text: str) -> int | None:
+    def count_tokens(
+        self, text: str, model_or_deployment: str | None = None
+    ) -> int | None:
         """Exact token count when the provider supports it; None = unsupported/unknown."""
         ...
 

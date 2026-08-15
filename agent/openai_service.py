@@ -42,8 +42,8 @@ class OpenAiService:
         plan = self.prompt_guard.restore_plan(context, plan)
         return plan
 
-    def generate_fix_plan(self, ctx: TestFailureContext) -> PatchProposalPlan:
-        prompt = (
+    def build_fix_prompt(self, ctx: TestFailureContext) -> str:
+        return (
             "A previous patch failed.\n\n"
             f"storyId: {ctx.story_id}\n"
             f"summary: {ctx.summary}\n"
@@ -54,7 +54,9 @@ class OpenAiService:
             f"STATIC_ANALYSIS:\n{self.prompt_guard.sanitize_for_fix(ctx.static_analysis_report)}\n\n"
             "Return the minimal correction as JSON only."
         )
-        return self._call_structured(prompt, "spring_boot_fix_plan")
+
+    def generate_fix_plan(self, ctx: TestFailureContext) -> PatchProposalPlan:
+        return self._call_structured(self.build_fix_prompt(ctx), "spring_boot_fix_plan")
 
     # ------------------------------------------------------------------ private
 

@@ -36,13 +36,24 @@ def estimate_tokens(text: str) -> int:
     return max(0, math.ceil(len(text) / 4))
 
 
-def count_prompt(provider: Any, prompt: str) -> tuple[int, str]:
+def count_prompt(
+    provider: Any,
+    prompt: str,
+    model_or_deployment: str | None = None,
+) -> tuple[int, str]:
     """Count the ACTUAL final prompt; returns (count, count_method).
 
     Exact when the provider can count tokens, otherwise the documented
     characters/4 estimate. The count method is never silently misreported.
     """
-    exact = provider.count_tokens(prompt)
+    try:
+        exact = provider.count_tokens(
+            prompt, model_or_deployment=model_or_deployment
+        )
+    except TypeError:
+        # Backward-compatible test/dummy providers still exposing the old
+        # one-argument contract.
+        exact = provider.count_tokens(prompt)
     if exact is not None:
         return int(exact), "exact:provider"
     return estimate_tokens(prompt), "estimate:chars/4"

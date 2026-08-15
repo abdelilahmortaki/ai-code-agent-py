@@ -276,15 +276,13 @@ class AgentOrchestrator:
         """
         cfg = self.config
         provider = self.generation_provider
-        limits = [
+        budget = compute_effective_budget([
             cfg.finops_ticket_token_limit,
             cfg.finops_project_token_limit,
             cfg.finops_model_token_limit,
-        ]
-        budget = compute_effective_budget(limits)
+        ])
         max_rounds = max(0, cfg.finops_max_reduction_rounds)
-        model = getattr(provider, "model_identity", "") or ""
-        routed_model = options.model_or_deployment if options else None
+        model = (options.model_or_deployment if options else None) or getattr(provider, "model_identity", "") or ""
         max_output = (
             options.max_output_tokens
             if options and options.max_output_tokens is not None
@@ -295,28 +293,16 @@ class AgentOrchestrator:
         rounds = 0
         reduced_paths: list[str] = []
 
-        def _stop_trace(method: str, count: int, result: str) -> dict:
-            return {
-                "provider": provider.provider_name,
-                "model": model,
-                "count_method": method,
-                "estimated_input_tokens": count,
-                "effective_input_budget": budget,
-                "threshold_result": result,
-                "reduction_outcome": "; ".join(
-                    f"dropped {path}" for path in reduced_paths
-                )
-                or "none",
-                "max_output_tokens": max_output,
-                "routing_reason": routing_reason,
-            }
-
         while True:
             prompt = provider.build_prompt(
                 project, story, files, static_analysis, validation_feedback
             )
-            count, method = count_prompt(provider, prompt)
-            result = evaluate(count, budget)
+            trace = self._finops_trace(
+                prompt, model, max_output, routing_reason,
+                self._sanitized_context(context_bundle),
+            )
+            count = trace["estimated_input_tokens"]
+            result = trace["threshold_result"]
             if result == "ok":
                 break
             if result == "not_configured":
@@ -326,7 +312,7 @@ class AgentOrchestrator:
                     f"FINOPS_STOP: estimated input tokens {count} exceed effective "
                     f"budget {budget}; context cannot be reduced further "
                     f"(reduction rounds exhausted)",
-                    finops=_stop_trace(method, count, result),
+                    finops=trace,
                 )
             drop_order = file_drop_order(context_bundle.items)
             to_drop = next(
@@ -337,7 +323,7 @@ class AgentOrchestrator:
                 raise FinOpsStoppedError(
                     f"FINOPS_STOP: estimated input tokens {count} exceed effective "
                     f"budget {budget}; no further low-value context to drop",
-                    finops=_stop_trace(method, count, result),
+                    finops=trace,
                 )
             files = [(p, c) for p, c in files if p != to_drop]
             reduced_paths.append(to_drop)
@@ -350,27 +336,51 @@ class AgentOrchestrator:
         else:
             reduction_outcome = "none"
 
+        trace["reduction_outcome"] = reduction_outcome
+        trace["prompt_hash"] = _sha256(prompt)
+        trace["reduction_rounds"] = rounds
+        return files, trace
+
+    def _finops_trace(
+        self,
+        prompt: str,
+        model: str,
+        max_output: int | None,
+        routing_reason: str,
+        selected_context: dict | None,
+    ) -> dict:
+        """Build one provider-neutral pre-call trace for any invocation."""
+        provider = self.generation_provider
+        budget = compute_effective_budget([
+            self.config.finops_ticket_token_limit,
+            self.config.finops_project_token_limit,
+            self.config.finops_model_token_limit,
+        ])
+        count, method = count_prompt(provider, prompt, model)
+        threshold = evaluate(count, budget)
         costs = compute_costs(
-            cfg.finops_pricing, provider.provider_name, model, count, None, max_output
+            self.config.finops_pricing,
+            provider.provider_name,
+            model,
+            count,
+            None,
+            max_output,
         )
-        selected_context = self._sanitized_context(context_bundle)
-        trace = {
+        return {
             "provider": provider.provider_name,
-            "model": routed_model or model,
+            "model": model,
             "count_method": method,
             "estimated_input_tokens": count,
             "effective_input_budget": budget,
-            "threshold_result": result,
-            "reduction_outcome": reduction_outcome,
+            "threshold_result": threshold,
+            "reduction_outcome": "none",
             "max_output_tokens": max_output,
             "estimated_max_cost": costs["estimated_max_cost"],
             "actual_operational_cost_estimate": costs["actual_operational_cost_estimate"],
             "routing_reason": routing_reason,
             "selected_context": selected_context,
             "prompt_hash": _sha256(prompt),
-            "reduction_rounds": rounds,
         }
-        return files, trace
 
     @staticmethod
     def _sanitized_context(bundle: ContextBundle | None) -> dict | None:
@@ -641,17 +651,51 @@ class AgentOrchestrator:
                 story.id, plan.summary, preview_diff, result,
                 static_analysis_report, attempts,
             )
-            repair_trace = {
-                "provider": getattr(self.generation_provider, "provider_name", ""),
-                "model": getattr(self.generation_provider, "model_identity", ""),
-                "count_method": "estimate:chars/4",
-                "estimated_input_tokens": None,
-                "effective_input_budget": None,
-                "threshold_result": None,
-                "reduction_outcome": f"repair attempt {attempts}",
-                "routing_reason": routing_reason,
-                "selected_context": None,
-            }
+            prompt_builder = getattr(self.generation_provider, "build_fix_prompt", None)
+            repair_prompt = (
+                prompt_builder(ctx)
+                if callable(prompt_builder)
+                else "\n".join([
+                    "A previous patch failed.",
+                    f"storyId: {ctx.story_id}",
+                    f"summary: {ctx.summary}",
+                    f"attempt: {ctx.attempt_number}",
+                    f"GIT_DIFF:\n{ctx.git_diff}",
+                    f"TEST_COMMAND:\n{ctx.test_command}",
+                    f"TEST_OUTPUT:\n{ctx.test_output}",
+                    f"STATIC_ANALYSIS:\n{ctx.static_analysis_report}",
+                ])
+            )
+            effective_model = (
+                options.model_or_deployment if options and options.model_or_deployment
+                else getattr(self.generation_provider, "model_identity", "")
+            )
+            max_output = (
+                options.max_output_tokens
+                if options and options.max_output_tokens is not None
+                else getattr(self.generation_provider, "max_output_tokens", None)
+            )
+            repair_trace = self._finops_trace(
+                repair_prompt,
+                effective_model,
+                max_output,
+                routing_reason,
+                None,
+            )
+            repair_trace.update({
+                "reduction_outcome": f"repair attempt {attempts} (validation failure)",
+                "attempt_number": attempts,
+                "context_indicator": "validation_failure",
+            })
+            if repair_trace["threshold_result"] == "over":
+                repair_trace["reduction_outcome"] += "; FINOPS_STOP"
+                self._record_llm_invocation(
+                    run_id, log, status="stopped",
+                    error="FINOPS_STOP: repair prompt exceeds effective budget",
+                    finops=repair_trace,
+                )
+                log("Repair blocked by FINOPS_STOP before provider call")
+                break
             try:
                 fix_proposal = self.generation_provider.generate_fix_plan(
                     ctx, log, options=options
@@ -768,6 +812,18 @@ class AgentOrchestrator:
             provider = getattr(self.generation_provider, "provider_name", None)
             model = (finops or {}).get("model") or getattr(self.generation_provider, "model_identity", None)
             usage = usage or {}
+            if finops is not None and (
+                usage.get("input_tokens") is not None
+                or usage.get("output_tokens") is not None
+            ):
+                finops["actual_operational_cost_estimate"] = compute_costs(
+                    self.config.finops_pricing,
+                    provider or "",
+                    model or "",
+                    usage.get("input_tokens"),
+                    usage.get("output_tokens"),
+                    finops.get("max_output_tokens"),
+                )["actual_operational_cost_estimate"]
             self.store.insert_llm_invocation(
                 run_id,
                 provider=provider,
@@ -790,6 +846,8 @@ class AgentOrchestrator:
                 routing_reason=(finops or {}).get("routing_reason"),
                 selected_context=(finops or {}).get("selected_context"),
                 prompt_hash=(finops or {}).get("prompt_hash"),
+                attempt_number=(finops or {}).get("attempt_number"),
+                context_indicator=(finops or {}).get("context_indicator"),
             )
         except Exception as exc:
             log(f"Invocation persistence skipped: {exc}")
