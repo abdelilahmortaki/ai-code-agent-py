@@ -1,0 +1,349 @@
+{
+  "timestamp": "2026-08-15T12:54:22.968460+00:00",
+  "branch": "dev",
+  "head": "86068bc6b362c8d1c9505f7a6f23ff561f6e6071",
+  "project_id": "upload-1786798106",
+  "project_name": "v1-merged-dev-fail-20260815",
+  "target_relative_path": "shoppoc-shared/src/main/java/com/shoppoc/shared/error/DomainError.java",
+  "search_term": "DomainError",
+  "before_sha256": "1b7f807f0db58a1562dc28fe6a754bd1981daa94aaf3f55118637f1f485e243b",
+  "provider": "azure",
+  "generation_deployment": "gpt-5-mini",
+  "embedding_deployment": "text-embedding-3-large",
+  "version_id": "23f76b0b-55b9-4738-a1cc-aebae923e64e",
+  "checks": [
+    {
+      "category": "provenance",
+      "name": "branch",
+      "status": "PASS",
+      "description": "current branch is dev"
+    },
+    {
+      "category": "config",
+      "name": "settings-load",
+      "status": "PASS",
+      "description": "Settings.load completed without exposing secrets"
+    },
+    {
+      "category": "config",
+      "name": "provider",
+      "status": "PASS",
+      "description": "runtime provider is azure"
+    },
+    {
+      "category": "config",
+      "name": "generation-config",
+      "status": "PASS",
+      "description": "Azure generation configuration is present"
+    },
+    {
+      "category": "config",
+      "name": "embedding-config",
+      "status": "PASS",
+      "description": "Azure embedding configuration is present"
+    },
+    {
+      "category": "config",
+      "name": "database-config",
+      "status": "PASS",
+      "description": "database configuration is present"
+    },
+    {
+      "category": "migrations",
+      "name": "vector-extension",
+      "status": "PASS",
+      "description": "PostgreSQL vector extension is installed"
+    },
+    {
+      "category": "migrations",
+      "name": "applied",
+      "status": "PASS",
+      "description": "schema migrations are applied (10 rows)"
+    },
+    {
+      "category": "database",
+      "name": "configured-db",
+      "status": "PASS",
+      "description": "database configuration verified"
+    },
+    {
+      "category": "project",
+      "name": "upload",
+      "status": "PASS",
+      "description": "fresh project upload responds"
+    },
+    {
+      "category": "project",
+      "name": "upload-id",
+      "status": "PASS",
+      "description": "upload returned a project id"
+    },
+    {
+      "category": "project",
+      "name": "upload-files",
+      "status": "PASS",
+      "description": "upload returned a non-zero file count"
+    },
+    {
+      "category": "backend",
+      "name": "health",
+      "status": "PASS",
+      "description": "backend health endpoint responds"
+    },
+    {
+      "category": "project",
+      "name": "resolve",
+      "status": "PASS",
+      "description": "freshly uploaded project is registered"
+    },
+    {
+      "category": "project",
+      "name": "files",
+      "status": "PASS",
+      "description": "project files endpoint responds"
+    },
+    {
+      "category": "target",
+      "name": "fixture-present",
+      "status": "PASS",
+      "description": "E2E fixture is present"
+    },
+    {
+      "category": "target",
+      "name": "fixture-unique",
+      "status": "PASS",
+      "description": "E2E fixture is unambiguous (1 match)"
+    },
+    {
+      "category": "target",
+      "name": "containment",
+      "status": "PASS",
+      "description": "resolved target is inside the project root"
+    },
+    {
+      "category": "target",
+      "name": "precondition",
+      "status": "PASS",
+      "description": "E2E fixture is in its expected pre-change state"
+    },
+    {
+      "category": "index",
+      "name": "rebuild-http",
+      "status": "PASS",
+      "description": "incremental PostgreSQL/pgvector indexing completes"
+    },
+    {
+      "category": "index",
+      "name": "version-fields",
+      "status": "PASS",
+      "description": "index version and file counters are sensible"
+    },
+    {
+      "category": "index",
+      "name": "symbols-embeddings",
+      "status": "PASS",
+      "description": "symbols and embeddings are indexed or reused"
+    },
+    {
+      "category": "index",
+      "name": "failed-files",
+      "status": "PASS",
+      "description": "index reports no failed files"
+    },
+    {
+      "category": "index",
+      "name": "embedding-runtime",
+      "status": "PASS",
+      "description": "Azure embedding metadata is valid when reported"
+    },
+    {
+      "category": "index",
+      "name": "available",
+      "status": "PASS",
+      "description": "an indexed project version is available"
+    },
+    {
+      "category": "lexical",
+      "name": "lexical-http",
+      "status": "PASS",
+      "description": "configured lexical search responds with HTTP 200"
+    },
+    {
+      "category": "lexical",
+      "name": "lexical-results",
+      "status": "PASS",
+      "description": "lexical retrieval returns useful indexed results"
+    },
+    {
+      "category": "lexical",
+      "name": "target-result",
+      "status": "PASS",
+      "description": "lexical retrieval includes the configured target file or symbol"
+    },
+    {
+      "category": "lexical",
+      "name": "graph-seed",
+      "status": "PASS",
+      "description": "a deterministic useful lexical result provides a graph seed"
+    },
+    {
+      "category": "graph",
+      "name": "depth0-http",
+      "status": "PASS",
+      "description": "graph depth 0 responds with HTTP 200"
+    },
+    {
+      "category": "graph",
+      "name": "depth0-shape",
+      "status": "PASS",
+      "description": "graph depth 0 resolves the seed and returns no neighbors"
+    },
+    {
+      "category": "graph",
+      "name": "depth1-http",
+      "status": "PASS",
+      "description": "graph depth 1 responds with HTTP 200"
+    },
+    {
+      "category": "graph",
+      "name": "depth1-shape",
+      "status": "PASS",
+      "description": "graph depth 1 preserves the seed and reports neighbors/cap"
+    },
+    {
+      "category": "graph",
+      "name": "invalid-depth",
+      "status": "PASS",
+      "description": "graph rejects unsupported depth 2 with HTTP 400"
+    },
+    {
+      "category": "priority",
+      "name": "normalization",
+      "status": "PASS",
+      "description": "priority normalization maps P1, p2, Medium and rejects invalid values"
+    },
+    {
+      "category": "executor",
+      "name": "argv",
+      "status": "PASS",
+      "description": "production SafeCommandExecutor runs argv without a shell"
+    },
+    {
+      "category": "context",
+      "name": "preview-http",
+      "status": "PASS",
+      "description": "context preview responds"
+    },
+    {
+      "category": "context",
+      "name": "items",
+      "status": "PASS",
+      "description": "context preview returns retrieval items"
+    },
+    {
+      "category": "context",
+      "name": "reasons",
+      "status": "PASS",
+      "description": "context items expose a 'reason'"
+    },
+    {
+      "category": "context",
+      "name": "selected-files",
+      "status": "PASS",
+      "description": "context bundle lists selected complete files"
+    },
+    {
+      "category": "vector/hybrid",
+      "name": "hybrid-evidence",
+      "status": "PASS",
+      "description": "context preview carries vector/hybrid retrieval evidence"
+    },
+    {
+      "category": "finops",
+      "name": "provider-boundary",
+      "status": "PASS",
+      "description": "Azure provider reports usage, no exact token counting, and count_tokens=None"
+    },
+    {
+      "category": "validation",
+      "name": "fail-probe-http",
+      "status": "PASS",
+      "description": "failing-validation generation responds (200)"
+    },
+    {
+      "category": "validation",
+      "name": "fail-probe-test-status",
+      "status": "PASS",
+      "description": "validation FAILED as expected (failed)"
+    },
+    {
+      "category": "repair",
+      "name": "invoked",
+      "status": "PASS",
+      "description": "bounded repair invocations persisted (2)"
+    },
+    {
+      "category": "repair",
+      "name": "bounded",
+      "status": "PASS",
+      "description": "repair attempts are bounded"
+    },
+    {
+      "category": "repair",
+      "name": "finops-token-budget",
+      "status": "PASS",
+      "description": "every repair invocation has token count, method, and threshold trace"
+    },
+    {
+      "category": "repair",
+      "name": "finops-budget-cost",
+      "status": "PASS",
+      "description": "every repair invocation has output budget and estimated max cost"
+    },
+    {
+      "category": "repair",
+      "name": "usage",
+      "status": "PASS",
+      "description": "every successful repair invocation persists Azure usage and actual cost"
+    },
+    {
+      "category": "repair",
+      "name": "failed-trace",
+      "status": "PASS",
+      "description": "failed repair provider calls persist status and error"
+    },
+    {
+      "category": "repair",
+      "name": "attempt-numbers",
+      "status": "PASS",
+      "description": "every repair invocation records a bounded attempt number"
+    },
+    {
+      "category": "repair",
+      "name": "same-run",
+      "status": "PASS",
+      "description": "every repair invocation remains attached to the failing run"
+    },
+    {
+      "category": "validation",
+      "name": "validation-required-gate",
+      "status": "PASS",
+      "description": "accept before PASS returns 409 VALIDATION_REQUIRED"
+    },
+    {
+      "category": "reject",
+      "name": "fail-probe-reject",
+      "status": "PASS",
+      "description": "failing-validation proposal is rejected"
+    },
+    {
+      "category": "immutable",
+      "name": "fail-probe-immutable",
+      "status": "PASS",
+      "description": "reference source is unchanged after failed validation + reject"
+    }
+  ],
+  "generation_attempt_results": [],
+  "runtime_overall": "PASS",
+  "overall_result": "PASS"
+}

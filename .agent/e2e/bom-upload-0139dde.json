@@ -1,0 +1,26 @@
+{
+  "commit": "0139ddecd8a6eb4aa76d8cf43ca5e714c506370d",
+  "project_id": "upload-1786798697",
+  "transport": "browser-equivalent base64 byte payload",
+  "files": {
+    "bom.json": {
+      "bytes_preserved": true,
+      "sha256": "181cd6f08be83512887937578e8350cc593d729d18b52ac709cd3823b024f598",
+      "prefix_hex": "efbbbf7b",
+      "crcrlf": false
+    },
+    "crlf.txt": {
+      "bytes_preserved": true,
+      "sha256": "6f4792b265fe72790b344fd3ef5294701d9d087bed9fce815c0f4bbad6d2ed87",
+      "prefix_hex": "6f6e650d",
+      "crcrlf": false
+    },
+    "plain.md": {
+      "bytes_preserved": true,
+      "sha256": "a8ddf935f2ec41303c1ab1cc0b45a0276949a4acf72b61e4e74386088e88871c",
+      "prefix_hex": "2320706c",
+      "crcrlf": false
+    }
+  },
+  "result": "PASS"
+}
