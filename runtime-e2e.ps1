@@ -6,14 +6,15 @@ param(
     [string]$SourceDir = "",
     [string]$TargetPathSuffix = "shoppoc-shared/src/main/java/com/shoppoc/shared/error/DomainError.java",
     [string]$SearchTerm = "DomainError",
-    [string]$OldCode = 'return of("NOT_FOUND", message);',
-    [string]$NewCode = 'return of("RESOURCE_NOT_FOUND", message);',
+    [string]$OldCode = "",
+    [string]$NewCode = "",
     [switch]$RefreshIndex,
     [ValidateRange(1, 5)]
     [int]$GenerationAttempts = 3,
     [switch]$ValidationFailProbe,
     [switch]$AcceptDestructive,
-    [string]$EvidenceDir = ""
+    [string]$EvidenceDir = "",
+    [string]$Branch = "dev"
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,13 +28,14 @@ $argsList = @(
     "--project-name", $ProjectName,
     "--target-suffix", $TargetPathSuffix,
     "--search-term", $SearchTerm,
-    "--old-code", $OldCode,
-    "--new-code", $NewCode,
-    "--attempt-cap", [string]$GenerationAttempts
+    "--attempt-cap", [string]$GenerationAttempts,
+    "--branch", $Branch
 )
 if ($ProjectId) { $argsList += @("--project-id", $ProjectId) }
 if ($UploadDir) { $argsList += @("--upload-dir", $UploadDir) }
 if ($SourceDir) { $argsList += @("--source-dir", $SourceDir) }
+if ($OldCode) { $argsList += @("--old-code", $OldCode) }
+if ($NewCode) { $argsList += @("--new-code", $NewCode) }
 if ($RefreshIndex) { $argsList += "--rebuild-index" }
 if ($ValidationFailProbe) { $argsList += "--validation-fail-probe" }
 if ($AcceptDestructive) { $argsList += "--accept-destructive" }

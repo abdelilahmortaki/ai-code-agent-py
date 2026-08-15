@@ -1167,8 +1167,26 @@ class Engine:
                 and isinstance(field(inv, "completion_tokens"), int)
                 and field(inv, "actual_operational_cost_estimate") is not None
                 for inv in repair_invocations
+                if field(inv, "status") == "ok"
             ),
-            "every completed repair invocation persists Azure usage and actual cost",
+            "every successful repair invocation persists Azure usage and actual cost",
+        )
+        self.result.require(
+            "repair", "failed-trace",
+            all(
+                field(inv, "status") != "failed" or bool(field(inv, "error"))
+                for inv in repair_invocations
+            ),
+            "failed repair provider calls persist status and error",
+        )
+        self.result.require(
+            "repair", "attempt-numbers",
+            all(
+                isinstance(field(inv, "attempt_number"), int)
+                and 1 <= field(inv, "attempt_number") <= self.args.attempt_cap
+                for inv in repair_invocations
+            ),
+            "every repair invocation records a bounded attempt number",
         )
         self.result.require(
             "repair", "same-run",
