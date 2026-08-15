@@ -409,7 +409,7 @@ async function onFolderSelected(input) {
   try {
     const entries = await Promise.all(files.map(async f => ({
       path: f.webkitRelativePath,
-      content: await f.text(),
+      content_base64: await _fileBase64(f),
     })));
     document.getElementById('overlay-msg').textContent = `Uploading ${entries.length} files…`;
     const res = await api('/api/agent/projects/upload', {
@@ -429,6 +429,14 @@ async function onFolderSelected(input) {
 }
 
 // ─── boot ───────────────────────────────────────────────────────────────────
+async function _fileBase64(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
 async function init() {
   try {
     const projects = await api('/api/agent/projects');

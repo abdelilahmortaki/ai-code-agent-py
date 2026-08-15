@@ -1,5 +1,7 @@
 from __future__ import annotations
 import asyncio
+import base64
+import binascii
 import json
 import time
 from pathlib import Path
@@ -363,11 +365,21 @@ def context_preview(project_id: str, request: ContextPreviewRequest):
 
 class _FileEntry(BaseModel):
     path: str    # webkitRelativePath, e.g. "myapp/src/main/java/Foo.java"
-    content: str
+    content: str | None = None
+    content_base64: str | None = None
 
 class _UploadRequest(BaseModel):
     project_name: str
     files: list[_FileEntry]
+
+
+def _file_bytes(file_entry: _FileEntry) -> bytes:
+    if file_entry.content_base64 is not None:
+        try:
+            return base64.b64decode(file_entry.content_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid base64 content: {file_entry.path}") from exc
+    return (file_entry.content or "").encode("utf-8")
 
 
 @app.post("/api/agent/projects/upload")
@@ -376,7 +388,7 @@ def upload_project(req: _UploadRequest):
         raise HTTPException(status_code=400, detail="Upload must contain at least one file")
     project_id = f"upload-{int(time.time())}"
     upload_root = Path(".agent/uploads") / project_id
-    destinations: list[tuple[_FileEntry, Path]] = []
+    destinations: list[tuple[_FileEntry, Path, bytes]] = []
     seen_destinations: set[str] = set()
     total_bytes = 0
 
@@ -398,7 +410,8 @@ def upload_project(req: _UploadRequest):
         if dest.suffix.lower() not in settings.agent.normalized_upload_allowed_extensions():
             raise HTTPException(status_code=400, detail=f"Invalid file extension: {f.path}")
 
-        file_bytes = len(f.content.encode("utf-8"))
+        raw_content = _file_bytes(f)
+        file_bytes = len(raw_content)
         if file_bytes > settings.agent.upload_max_file_bytes:
             raise HTTPException(status_code=413, detail=f"File is too large: {f.path}")
         total_bytes += file_bytes
@@ -409,11 +422,11 @@ def upload_project(req: _UploadRequest):
         if destination_key in seen_destinations:
             raise HTTPException(status_code=400, detail=f"Duplicate file path: {f.path}")
         seen_destinations.add(destination_key)
-        destinations.append((f, dest))
+        destinations.append((f, dest, raw_content))
 
-    for f, dest in destinations:
+    for f, dest, raw_content in destinations:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(f.content.encode("utf-8"))
+        dest.write_bytes(raw_content)
 
     new_proj = ProjectConfig(
         id=project_id,
