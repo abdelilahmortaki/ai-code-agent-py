@@ -421,7 +421,11 @@ class HybridRetrievalService:
                 version_id,
                 seed_ids,
                 depth=1,
-                max_related=max_related,
+                # Keep the graph expansion wide enough to retain relevant
+                # implementations behind high-ranked interfaces/classes;
+                # final top_k ranking still applies the normal deterministic
+                # fusion and truncation.
+                max_related=pool_size,
             )
             for neighbor in expansion["neighbors"]:
                 relations = neighbor.get("relations") or []
